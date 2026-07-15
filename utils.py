@@ -3,7 +3,7 @@ import time
 import requests
 import pandas as pd
 
-BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
+BINANCE_KLINES_URL = "https://data-api.binance.vision/api/v3/klines"
 TELEGRAM_API_URL = "https://api.telegram.org/bot{token}/sendMessage"
 
 
