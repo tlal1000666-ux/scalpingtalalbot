@@ -25,7 +25,7 @@ MIN_CONFLUENCE = 2
 CCI_ENTRY_THRESHOLD = -180
 
 # --- فلتر نظام السوق ---
-MARKET_REGIME_LOOKBACK_BARS = 336   # 7 أيام على فريم 30m
+MARKET_REGIME_LOOKBACK_BARS = 96    # يومين على فريم 30m   # 7 أيام على فريم 30m
 MARKET_REGIME_THRESHOLD = -5.0
 
 # --- إدارة الصفقة ---
