@@ -5,6 +5,7 @@ import pandas as pd
 
 BINANCE_KLINES_URL = "https://data-api.binance.vision/api/v3/klines"
 TELEGRAM_API_URL = "https://api.telegram.org/bot{token}/sendMessage"
+TELEGRAM_UPDATES_URL = "https://api.telegram.org/bot{token}/getUpdates"
 
 
 def fetch_klines(symbol: str, interval: str = "30m", limit: int = 500) -> pd.DataFrame | None:
@@ -43,6 +44,20 @@ def send_telegram_message(token: str, chat_id: str, text: str):
         resp.raise_for_status()
     except Exception as e:
         print(f"  [تحذير] فشل إرسال رسالة تلجرام: {e}")
+
+
+def get_telegram_updates(token: str, offset: int = 0):
+    """يجلب الرسائل الجديدة المرسلة للبوت منذ آخر offset معروف."""
+    url = TELEGRAM_UPDATES_URL.format(token=token)
+    params = {"offset": offset, "timeout": 0}
+    try:
+        resp = requests.get(url, params=params, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+        return data.get("result", [])
+    except Exception as e:
+        print(f"  [تحذير] فشل جلب رسائل تلجرام: {e}")
+        return []
 
 
 def sleep_safe(seconds: float = 0.25):
