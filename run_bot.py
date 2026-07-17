@@ -63,10 +63,9 @@ def fmt_price(p):
 def send(msg):
     print(msg.replace("\n", " | "))
     if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
-        return send_telegram_message(TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, msg)
+        send_telegram_message(TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, msg)
     else:
         print("  [تنبيه] TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID غير مضبوطة - لن يُرسل شيء فعليًا.")
-        return False
 
 
 def main():
@@ -74,22 +73,6 @@ def main():
     symbols = load_symbols()
     state = load_state()
     print(f"عدد الرموز المراقبة: {len(symbols)}")
-
-    # ---------- 0) إعادة محاولة إرسال أي إشعار دخول فشل بتشغيلة سابقة ----------
-    for sym, pos in state["open_positions"].items():
-        if not pos.get("notified", True):  # الحقل غير موجود بصفقات قديمة = نعتبرها مُرسلة فعلاً
-            msg = (
-                f"🚨 <b>توصية دخول جديدة: {sym}</b>\n"
-                f"سعر الدخول التقريبي: {fmt_price(pos['entry_price'])}\n"
-                f"وقف الخسارة (SL): {fmt_price(pos['sl'])}\n"
-                f"جني الأرباح (TP): {fmt_price(pos['tp'])}\n"
-                f"حجم الصفقة المقترح: {strategy.POSITION_SIZE_PCT*100:.0f}% من رأس المال\n"
-                f"قوة الإشارة: {pos.get('score', 0):.2f}\n"
-                f"(إشعار مُعاد الإرسال بعد فشل سابق)\n"
-                f"⚠️ هذه توصية آلية من نظام باكتست، وليست نصيحة مالية. تحقق دائمًا بنفسك قبل التنفيذ."
-            )
-            if send(msg):
-                pos["notified"] = True
 
     # ---------- 1) جلب البيانات وحساب المؤشرات لكل رمز ----------
     data = {}
@@ -199,7 +182,6 @@ def main():
             "sl": sl_price,
             "tp": tp_price,
             "score": round(float(score), 4),
-            "notified": False,
         }
         available_slots -= 1
         msg = (
@@ -211,8 +193,7 @@ def main():
             f"قوة الإشارة: {score:.2f}\n"
             f"⚠️ هذه توصية آلية من نظام باكتست، وليست نصيحة مالية. تحقق دائمًا بنفسك قبل التنفيذ."
         )
-        if send(msg):
-            open_positions[sym]["notified"] = True
+        send(msg)
 
     # تحديث آخر شمعة تمت معالجتها لكل رمز (لمنع التكرار)
     for sym, df in data.items():
