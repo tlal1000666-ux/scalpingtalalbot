@@ -63,4 +63,3 @@ def get_telegram_updates(token: str, offset: int = 0):
 def sleep_safe(seconds: float = 0.25):
     """تهدئة بسيطة بين طلبات API لتجنب rate limits."""
     time.sleep(seconds)
-    
