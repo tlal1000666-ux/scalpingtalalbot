@@ -1,36 +1,42 @@
 name: Trading Signal Bot
-on:
-  workflow_dispatch:
 
-concurrency:
-  group: trading-signal-bot
-  cancel-in-progress: false
+on:
+  workflow_dispatch: {}   # التشغيل الآن فقط عبر استدعاء خارجي (cron-job.org) أو يدويًا من تبويب Actions
+  # ملاحظة: تم إلغاء "schedule" نهائيًا لتفادي تصادم تشغيلين بنفس الوقت
+  # (كان يسبب فشل حفظ state.json بسبب تعارض git push، وهذا سبب توقف الردود)
 
 permissions:
-  contents: write
+  contents: write   # مطلوب حتى يقدر البوت يحفظ state.json و trades_log.csv بالريبو
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+    concurrency:
+      group: trading-signal-bot
+      cancel-in-progress: false   # لو صار تشغيلين بالخطأ بنفس الوقت، الثاني ينتظر بدل ما يتصادم
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
+
       - name: Install dependencies
         run: pip install -r requirements.txt
+
       - name: Run bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python run_bot.py
-      - name: Commit state and trade log back to repo
+
+      - name: Commit state & trade log back to repo
         run: |
           git config --global user.name "signal-bot"
           git config --global user.email "signal-bot@users.noreply.github.com"
-          git add state.json trades_log.csv 2>/dev/null || git add state.json
-          git diff --staged --quiet || git commit -m "update bot state"
           git pull --rebase origin main
+          git add state.json trades_log.csv
+          git diff --staged --quiet || git commit -m "تحديث حالة البوت [skip ci]"
           git push
