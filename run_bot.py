@@ -1,13 +1,12 @@
 """
-بوت توصيات تداول - يشتغل مرة كل تشغيل (مصمم ليُستدعى دوريًا كل 30 دقيقة)
+بوت توصيات تداول - يشتغل مرة كل تشغيل (مصمم ليُستدعى دوريًا عبر GitHub Actions كل 30 دقيقة)
 
 الوظيفة:
-  1. يفحص أوامر تلجرام الجديدة (/balance /positions /stats /signals /help) ويرد عليها
-  2. يجلب آخر بيانات الشموع (30m) من Binance لقائمة الرموز في symbols.txt
-  3. يحسب المؤشرات ويفحص شروط الدخول (نفس منطق الباكتست بالضبط)
-  4. يتابع الصفقات "الافتراضية" المفتوحة ويغلقها عند SL/TP/وقف زمني
-  5. يرسل كل إشارة دخول/خروج كرسالة تلجرام، ويحدّث الرصيد الافتراضي والإحصائيات
-  6. يسجل كل صفقة مغلقة في trades_log.csv (لمقارنة الأداء الحي بتوقعات الباكتست لاحقًا)
+  1. يجلب آخر بيانات الشموع (30m) من Binance لقائمة الرموز في symbols.txt
+  2. يحسب المؤشرات ويفحص شروط الدخول (نفس منطق الباكتست بالضبط)
+  3. يتابع الصفقات "الافتراضية" المفتوحة ويغلقها عند SL/TP/وقف زمني
+  4. يرسل كل إشارة دخول/خروج كرسالة تلجرام
+  5. يسجل كل صفقة مغلقة في trades_log.csv (لمقارنة الأداء الحي بتوقعات الباكتست لاحقًا)
 
 ⚠️ هذا أداة توصيات وتتبع فقط — لا ينفذ أي صفقة حقيقية بنفسه، ولا يشكل نصيحة استثمارية.
 """
@@ -19,15 +18,13 @@ from datetime import datetime, timezone, timedelta
 import pandas as pd
 
 import strategy
-from utils import fetch_klines, send_telegram_message, get_telegram_updates, sleep_safe
+from utils import fetch_klines, send_telegram_message, sleep_safe
 
 STATE_FILE = "state.json"
 TRADES_LOG_FILE = "trades_log.csv"
 SYMBOLS_FILE = "symbols.txt"
 INTERVAL = "30m"
 INTERVAL_MINUTES = 30
-STARTING_BALANCE = 10000.0
-MAX_SIGNAL_HISTORY = 20
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
@@ -38,27 +35,11 @@ def load_symbols():
         return [line.strip() for line in f if line.strip() and not line.startswith("#")]
 
 
-def default_state():
-    return {
-        "open_positions": {},
-        "cooldown_until": {},
-        "last_candle_seen": {},
-        "balance": STARTING_BALANCE,
-        "stats": {"total_trades": 0, "wins": 0, "losses": 0, "gross_profit": 0.0, "gross_loss": 0.0},
-        "last_update_id": 0,
-        "signal_history": [],
-    }
-
-
 def load_state():
     if os.path.exists(STATE_FILE):
         with open(STATE_FILE, "r", encoding="utf-8") as f:
-            state = json.load(f)
-        for k, v in default_state().items():
-            if k not in state:
-                state[k] = v
-        return state
-    return default_state()
+            return json.load(f)
+    return {"open_positions": {}, "cooldown_until": {}, "last_candle_seen": {}}
 
 
 def save_state(state):
@@ -79,34 +60,277 @@ def fmt_price(p):
     return f"{p:.6f}".rstrip("0").rstrip(".")
 
 
-def push(msg):
-    """يرسل رسالة للـ chat الرئيسي المضبوط بالـ secrets (تنبيهات الدخول/الخروج التلقائية)."""
+def send(msg):
     print(msg.replace("\n", " | "))
     if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
-        send_telegram_message(TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, msg)
+        return send_telegram_message(TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, msg)
     else:
         print("  [تنبيه] TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID غير مضبوطة - لن يُرسل شيء فعليًا.")
+        return False
 
 
-def reply(chat_id, msg):
-    """يرد على أمر معين بنفس المحادثة اللي جا منها."""
-    print(f"[رد على أمر] {msg.replace(chr(10), ' | ')}")
-    if TELEGRAM_TOKEN:
-        send_telegram_message(TELEGRAM_TOKEN, chat_id, msg)
+def main():
+    print(f"=== تشغيل البوت — {datetime.now(timezone.utc).isoformat()} ===")
+    symbols = load_symbols()
+    state = load_state()
+    print(f"عدد الرموز المراقبة: {len(symbols)}")
+
+    # ---------- 0) إعادة محاولة إرسال أي إشعار دخول فشل بتشغيلة سابقة ----------
+    for sym, pos in state["open_positions"].items():
+        if not pos.get("notified", True):  # الحقل غير موجود بصفقات قديمة = نعتبرها مُرسلة فعلاً
+            msg = (
+                f"🚨 <b>توصية دخول جديدة: {sym}</b>\n"
+                f"سعر الدخول التقريبي: {fmt_price(pos['entry_price'])}\n"
+                f"وقف الخسارة (SL): {fmt_price(pos['sl'])}\n"
+                f"جني الأرباح (TP): {fmt_price(pos['tp'])}\n"
+                f"حجم الصفقة المقترح: {strategy.POSITION_SIZE_PCT*100:.0f}% من رأس المال\n"
+                f"قوة الإشارة: {pos.get('score', 0):.2f}\n"
+                f"(إشعار مُعاد الإرسال بعد فشل سابق)\n"
+                f"⚠️ هذه توصية آلية من نظام باكتست، وليست نصيحة مالية. تحقق دائمًا بنفسك قبل التنفيذ."
+            )
+            if send(msg):
+                pos["notified"] = True
+
+    # ---------- 1) جلب البيانات وحساب المؤشرات لكل رمز ----------
+    data = {}
+    for sym in symbols:
+        df = fetch_klines(sym, interval=INTERVAL, limit=500)
+        sleep_safe(0.2)
+        if df is None or len(df) < 250:
+            continue
+        df = strategy.compute_all_indicators(df)
+        data[sym] = df
+
+    if not data:
+        print("لم يتم جلب أي بيانات صالحة. إيقاف التشغيل.")
+        return
+
+    # ---------- 2) حساب نظام السوق العام (متوسط عائد آخر 7 أيام لكل الرموز) ----------
+    closes = {sym: df.set_index("open_time_utc")["close"] for sym, df in data.items()}
+    pivot = pd.DataFrame(closes)
+    returns_7d = pivot.pct_change(strategy.MARKET_REGIME_LOOKBACK_BARS)
+    market_regime_series = returns_7d.mean(axis=1) * 100
+    latest_market_regime = float(market_regime_series.iloc[-1]) if len(market_regime_series) else None
+    print(f"نظام السوق العام (عائد 7 أيام): {latest_market_regime:.2f}%" if latest_market_regime is not None else "نظام السوق: غير متاح")
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    # ---------- 3) فحص الصفقات المفتوحة حاليًا (خروج SL / TP / وقف زمني) ----------
+    open_positions = state["open_positions"]
+    for sym in list(open_positions.keys()):
+        if sym not in data:
+            continue
+        pos = open_positions[sym]
+        last = data[sym].iloc[-1]
+        entry_time = pd.Timestamp(pos["entry_time"])
+        bars_elapsed = int((last["open_time_utc"] - entry_time) / pd.Timedelta(minutes=INTERVAL_MINUTES))
+
+        exit_price, exit_reason = None, None
+        if last["low"] <= pos["sl"]:
+            exit_price, exit_reason = pos["sl"], "SL 🔴"
+        elif last["high"] >= pos["tp"]:
+            exit_price, exit_reason = pos["tp"], "TP 🟢"
+        elif bars_elapsed >= strategy.TIME_STOP_BARS:
+            exit_price, exit_reason = last["close"], "وقف زمني ⏱️"
+
+        if exit_price is not None:
+            round_trip_cost = 0.30  # % (نفس افتراض الباكتست)
+            pnl_pct = (exit_price - pos["entry_price"]) / pos["entry_price"] * 100 - round_trip_cost
+            emoji = "✅" if pnl_pct > 0 else "❌"
+            msg = (
+                f"{emoji} <b>إغلاق صفقة: {sym}</b>\n"
+                f"السبب: {exit_reason}\n"
+                f"سعر الدخول: {fmt_price(pos['entry_price'])}\n"
+                f"سعر الخروج: {fmt_price(exit_price)}\n"
+                f"النتيجة الصافية: {pnl_pct:+.2f}%\n"
+                f"مدة الصفقة: {bars_elapsed} شمعة"
+            )
+            send(msg)
+            append_trade_log({
+                "pair": sym,
+                "entry_time": pos["entry_time"],
+                "exit_time": str(last["open_time_utc"]),
+                "entry_price": pos["entry_price"],
+                "exit_price": exit_price,
+                "pnl_pct_net": round(pnl_pct, 4),
+                "exit_reason": exit_reason,
+                "score": pos.get("score", ""),
+            })
+            del open_positions[sym]
+            cooldown_until = last["open_time_utc"] + timedelta(minutes=INTERVAL_MINUTES * strategy.COOLDOWN_BARS_AFTER_TRADE)
+            state["cooldown_until"][sym] = str(cooldown_until)
+
+    # ---------- 4) فحص إشارات دخول جديدة ----------
+    candidates = []
+    for sym, df in data.items():
+        if sym in open_positions:
+            continue
+        cooldown_until = state["cooldown_until"].get(sym)
+        last = df.iloc[-1]
+        if cooldown_until and pd.Timestamp(last["open_time_utc"]) < pd.Timestamp(cooldown_until):
+            continue
+        # تفادي تكرار نفس الإشارة أكثر من مرة لنفس الشمعة
+        last_seen = state["last_candle_seen"].get(sym)
+        candle_key = str(last["open_time_utc"])
+        if last_seen == candle_key:
+            continue
+
+        ok, score = strategy.check_entry_signal(last, latest_market_regime)
+        if ok:
+            candidates.append((sym, score, last))
+
+    # فلتر الازدحام: لو عدد الإشارات بنفس اللحظة أكبر من الحد، تُرفض كلها
+    if len(candidates) > strategy.CROWD_FILTER_MAX_SIGNALS:
+        print(f"فلتر الازدحام: رُفضت {len(candidates)} إشارة (تجاوزت الحد {strategy.CROWD_FILTER_MAX_SIGNALS})")
+        candidates = []
+
+    # ترتيب حسب قوة الإشارة (score) وأخذ الأقوى أولاً ضمن السعة المتاحة
+    candidates.sort(key=lambda x: x[1], reverse=True)
+    available_slots = strategy.MAX_CONCURRENT_TRADES - len(open_positions)
+
+    for sym, score, last in candidates:
+        if available_slots <= 0:
+            break
+        entry_price = float(last["close"])  # أفضل تقدير متاح لحظة الإشارة (شمعة مغلقة للتو)
+        sl_price, tp_price = strategy.compute_sl_tp(entry_price, float(last["atr"]))
+        open_positions[sym] = {
+            "entry_time": str(last["open_time_utc"]),
+            "entry_price": entry_price,
+            "sl": sl_price,
+            "tp": tp_price,
+            "score": round(float(score), 4),
+            "notified": False,
+        }
+        available_slots -= 1
+        msg = (
+            f"🚨 <b>توصية دخول جديدة: {sym}</b>\n"
+            f"سعر الدخول التقريبي: {fmt_price(entry_price)}\n"
+            f"وقف الخسارة (SL): {fmt_price(sl_price)}\n"
+            f"جني الأرباح (TP): {fmt_price(tp_price)}\n"
+            f"حجم الصفقة المقترح: {strategy.POSITION_SIZE_PCT*100:.0f}% من رأس المال\n"
+            f"قوة الإشارة: {score:.2f}\n"
+            f"⚠️ هذه توصية آلية من نظام باكتست، وليست نصيحة مالية. تحقق دائمًا بنفسك قبل التنفيذ."
+        )
+        if send(msg):
+            open_positions[sym]["notified"] = True
+
+    # تحديث آخر شمعة تمت معالجتها لكل رمز (لمنع التكرار)
+    for sym, df in data.items():
+        state["last_candle_seen"][sym] = str(df.iloc[-1]["open_time_utc"])
+
+    save_state(state)
+    print(f"الصفقات المفتوحة حاليًا بعد هذا التشغيل: {len(open_positions)}")
+    print("=== انتهى التشغيل ===")
 
 
-def log_signal(state, kind, symbol, detail):
-    """يضيف حدث لسجل آخر الإشارات (يُستخدم لأمر /signals)."""
-    entry = {
-        "time": datetime.now(timezone.utc).isoformat(),
-        "kind": kind,       # "دخول" أو "خروج"
-        "symbol": symbol,
-        "detail": detail,
-    }
-    state["signal_history"].insert(0, entry)
-    state["signal_history"] = state["signal_history"][:MAX_SIGNAL_HISTORY]
+if __name__ == "__main__":
+    main()            continue
+        pos = open_positions[sym]
+        last = data[sym].iloc[-1]
+        entry_time = pd.Timestamp(pos["entry_time"])
+        bars_elapsed = int((last["open_time_utc"] - entry_time) / pd.Timedelta(minutes=INTERVAL_MINUTES))
+
+        exit_price, exit_reason = None, None
+        if last["low"] <= pos["sl"]:
+            exit_price, exit_reason = pos["sl"], "SL 🔴"
+        elif last["high"] >= pos["tp"]:
+            exit_price, exit_reason = pos["tp"], "TP 🟢"
+        elif bars_elapsed >= strategy.TIME_STOP_BARS:
+            exit_price, exit_reason = last["close"], "وقف زمني ⏱️"
+
+        if exit_price is not None:
+            round_trip_cost = 0.30  # % (نفس افتراض الباكتست)
+            pnl_pct = (exit_price - pos["entry_price"]) / pos["entry_price"] * 100 - round_trip_cost
+            emoji = "✅" if pnl_pct > 0 else "❌"
+            msg = (
+                f"{emoji} <b>إغلاق صفقة: {sym}</b>\n"
+                f"السبب: {exit_reason}\n"
+                f"سعر الدخول: {fmt_price(pos['entry_price'])}\n"
+                f"سعر الخروج: {fmt_price(exit_price)}\n"
+                f"النتيجة الصافية: {pnl_pct:+.2f}%\n"
+                f"مدة الصفقة: {bars_elapsed} شمعة"
+            )
+            send(msg)
+            append_trade_log({
+                "pair": sym,
+                "entry_time": pos["entry_time"],
+                "exit_time": str(last["open_time_utc"]),
+                "entry_price": pos["entry_price"],
+                "exit_price": exit_price,
+                "pnl_pct_net": round(pnl_pct, 4),
+                "exit_reason": exit_reason,
+                "score": pos.get("score", ""),
+            })
+            del open_positions[sym]
+            cooldown_until = last["open_time_utc"] + timedelta(minutes=INTERVAL_MINUTES * strategy.COOLDOWN_BARS_AFTER_TRADE)
+            state["cooldown_until"][sym] = str(cooldown_until)
+
+    # ---------- 4) فحص إشارات دخول جديدة ----------
+    candidates = []
+    for sym, df in data.items():
+        if sym in open_positions:
+            continue
+        cooldown_until = state["cooldown_until"].get(sym)
+        last = df.iloc[-1]
+        if cooldown_until and pd.Timestamp(last["open_time_utc"]) < pd.Timestamp(cooldown_until):
+            continue
+        # تفادي تكرار نفس الإشارة أكثر من مرة لنفس الشمعة
+        last_seen = state["last_candle_seen"].get(sym)
+        candle_key = str(last["open_time_utc"])
+        if last_seen == candle_key:
+            continue
+
+        ok, score = strategy.check_entry_signal(last, latest_market_regime)
+        if ok:
+            candidates.append((sym, score, last))
+
+    # فلتر الازدحام: لو عدد الإشارات بنفس اللحظة أكبر من الحد، تُرفض كلها
+    if len(candidates) > strategy.CROWD_FILTER_MAX_SIGNALS:
+        print(f"فلتر الازدحام: رُفضت {len(candidates)} إشارة (تجاوزت الحد {strategy.CROWD_FILTER_MAX_SIGNALS})")
+        candidates = []
+
+    # ترتيب حسب قوة الإشارة (score) وأخذ الأقوى أولاً ضمن السعة المتاحة
+    candidates.sort(key=lambda x: x[1], reverse=True)
+    available_slots = strategy.MAX_CONCURRENT_TRADES - len(open_positions)
+
+    for sym, score, last in candidates:
+        if available_slots <= 0:
+            break
+        entry_price = float(last["close"])  # أفضل تقدير متاح لحظة الإشارة (شمعة مغلقة للتو)
+        sl_price, tp_price = strategy.compute_sl_tp(entry_price, float(last["atr"]))
+        open_positions[sym] = {
+            "entry_time": str(last["open_time_utc"]),
+            "entry_price": entry_price,
+            "sl": sl_price,
+            "tp": tp_price,
+            "score": round(float(score), 4),
+            "notified": False,
+        }
+        available_slots -= 1
+        msg = (
+            f"🚨 <b>توصية دخول جديدة: {sym}</b>\n"
+            f"سعر الدخول التقريبي: {fmt_price(entry_price)}\n"
+            f"وقف الخسارة (SL): {fmt_price(sl_price)}\n"
+            f"جني الأرباح (TP): {fmt_price(tp_price)}\n"
+            f"حجم الصفقة المقترح: {strategy.POSITION_SIZE_PCT*100:.0f}% من رأس المال\n"
+            f"قوة الإشارة: {score:.2f}\n"
+            f"⚠️ هذه توصية آلية من نظام باكتست، وليست نصيحة مالية. تحقق دائمًا بنفسك قبل التنفيذ."
+        )
+        if send(msg):
+            open_positions[sym]["notified"] = True
+
+    # تحديث آخر شمعة تمت معالجتها لكل رمز (لمنع التكرار)
+    for sym, df in data.items():
+        state["last_candle_seen"][sym] = str(df.iloc[-1]["open_time_utc"])
+
+    save_state(state)
+    print(f"الصفقات المفتوحة حاليًا بعد هذا التشغيل: {len(open_positions)}")
+    print("=== انتهى التشغيل ===")
 
 
+if __name__ == "__main__":
+    main()
+      
 # ============================================================
 # معالجة أوامر تلجرام التفاعلية
 # ============================================================
