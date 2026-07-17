@@ -36,16 +36,14 @@ def fetch_klines(symbol: str, interval: str = "30m", limit: int = 500) -> pd.Dat
     return df[["pair", "open_time_utc", "open", "high", "low", "close", "volume"]]
 
 
-def send_telegram_message(token: str, chat_id: str, text: str) -> bool:
+def send_telegram_message(token: str, chat_id: str, text: str):
     url = TELEGRAM_API_URL.format(token=token)
     payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True}
     try:
         resp = requests.post(url, json=payload, timeout=15)
         resp.raise_for_status()
-        return True
     except Exception as e:
         print(f"  [تحذير] فشل إرسال رسالة تلجرام: {e}")
-        return False
 
 
 def get_telegram_updates(token: str, offset: int = 0):
@@ -65,3 +63,4 @@ def get_telegram_updates(token: str, offset: int = 0):
 def sleep_safe(seconds: float = 0.25):
     """تهدئة بسيطة بين طلبات API لتجنب rate limits."""
     time.sleep(seconds)
+    
