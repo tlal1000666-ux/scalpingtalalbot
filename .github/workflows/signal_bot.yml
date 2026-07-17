@@ -2,18 +2,16 @@ name: Trading Signal Bot
 
 on:
   workflow_dispatch: {}   # التشغيل الآن فقط عبر استدعاء خارجي (cron-job.org) أو يدويًا من تبويب Actions
-  # ملاحظة: تم إلغاء "schedule" نهائيًا لتفادي تصادم تشغيلين بنفس الوقت
-  # (كان يسبب فشل حفظ state.json بسبب تعارض git push، وهذا سبب توقف الردود)
 
 permissions:
-  contents: write   # مطلوب حتى يقدر البوت يحفظ state.json و trades_log.csv بالريبو
+  contents: write
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
     concurrency:
       group: trading-signal-bot
-      cancel-in-progress: false   # لو صار تشغيلين بالخطأ بنفس الوقت، الثاني ينتظر بدل ما يتصادم
+      cancel-in-progress: false
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -36,7 +34,11 @@ jobs:
         run: |
           git config --global user.name "signal-bot"
           git config --global user.email "signal-bot@users.noreply.github.com"
-          git pull --rebase origin main
           git add state.json trades_log.csv
-          git diff --staged --quiet || git commit -m "تحديث حالة البوت [skip ci]"
-          git push
+          if ! git diff --staged --quiet; then
+            git commit -m "تحديث حالة البوت [skip ci]"
+            git pull --rebase origin main
+            git push
+          else
+            echo "لا يوجد تغيير يستحق الحفظ."
+          fi
