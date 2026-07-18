@@ -31,6 +31,8 @@ MAX_SIGNAL_HISTORY = 20
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+# يدعم أكثر من شخص: ضع كل الـ Chat IDs مفصولة بفاصلة بنفس الـ secret، مثال: "111111,222222,333333"
+TELEGRAM_CHAT_IDS = [c.strip() for c in TELEGRAM_CHAT_ID.split(",") if c.strip()]
 
 
 def load_symbols():
@@ -80,10 +82,11 @@ def fmt_price(p):
 
 
 def push(msg):
-    """يرسل رسالة للـ chat الرئيسي المضبوط بالـ secrets (تنبيهات الدخول/الخروج التلقائية)."""
+    """يرسل رسالة لكل الأشخاص المضبوطين بالـ secrets (تنبيهات الدخول/الخروج التلقائية)."""
     print(msg.replace("\n", " | "))
-    if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
-        send_telegram_message(TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, msg)
+    if TELEGRAM_TOKEN and TELEGRAM_CHAT_IDS:
+        for chat_id in TELEGRAM_CHAT_IDS:
+            send_telegram_message(TELEGRAM_TOKEN, chat_id, msg)
     else:
         print("  [تنبيه] TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID غير مضبوطة - لن يُرسل شيء فعليًا.")
 
@@ -124,7 +127,8 @@ def handle_commands(state):
             continue
 
         chat_id = str(msg["chat"]["id"])
-        if TELEGRAM_CHAT_ID and chat_id != str(TELEGRAM_CHAT_ID):
+        # لأمان: نرد بس على الشاتات المضبوطة بالـ secrets، نتجاهل أي شات ثاني
+        if TELEGRAM_CHAT_IDS and chat_id not in TELEGRAM_CHAT_IDS:
             continue
 
         text = msg["text"].strip().lower()
@@ -246,6 +250,11 @@ def main():
         print("لم يتم جلب أي بيانات صالحة. حفظ الحالة (بعد أي أوامر تمت معالجتها) والإيقاف.")
         save_state(state)
         return
+
+    print(f"✅ نجح جلب بيانات {len(data)}/{len(symbols)} رمز بهذا التشغيل")
+    if len(data) < len(symbols) * 0.9:
+        missing = set(symbols) - set(data.keys())
+        print(f"⚠️ فشل جلب {len(missing)} رمز، أمثلة: {list(missing)[:10]}")
 
     # ---------- 2) حساب نظام السوق العام ----------
     closes = {sym: df.set_index("open_time_utc")["close"] for sym, df in data.items()}
