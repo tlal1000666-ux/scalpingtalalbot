@@ -8,16 +8,26 @@ TELEGRAM_API_URL = "https://api.telegram.org/bot{token}/sendMessage"
 TELEGRAM_UPDATES_URL = "https://api.telegram.org/bot{token}/getUpdates"
 
 
-def fetch_klines(symbol: str, interval: str = "30m", limit: int = 500) -> pd.DataFrame | None:
-    """يجلب شموع OHLCV من Binance (نقطة نهاية عامة، بدون حاجة لمفتاح API)."""
+def fetch_klines(symbol: str, interval: str = "30m", limit: int = 500, retries: int = 2) -> pd.DataFrame | None:
+    """يجلب شموع OHLCV من Binance (نقطة نهاية عامة، بدون حاجة لمفتاح API).
+    يعيد المحاولة تلقائيًا لو صار 429 (تجاوز حد الطلبات)."""
     params = {"symbol": symbol, "interval": interval, "limit": limit}
-    try:
-        resp = requests.get(BINANCE_KLINES_URL, params=params, timeout=15)
-        resp.raise_for_status()
-        raw = resp.json()
-    except Exception as e:
-        print(f"  [تحذير] فشل جلب بيانات {symbol}: {e}")
-        return None
+    raw = None
+    for attempt in range(retries + 1):
+        try:
+            resp = requests.get(BINANCE_KLINES_URL, params=params, timeout=15)
+            if resp.status_code == 429:
+                wait = 2 * (attempt + 1)
+                print(f"  [تحذير] 429 (rate limit) لـ{symbol} - إعادة محاولة بعد {wait} ثانية...")
+                time.sleep(wait)
+                continue
+            resp.raise_for_status()
+            raw = resp.json()
+            break
+        except Exception as e:
+            print(f"  [تحذير] فشل جلب بيانات {symbol} (محاولة {attempt+1}/{retries+1}): {e}")
+            if attempt < retries:
+                time.sleep(1)
 
     if not raw:
         return None
