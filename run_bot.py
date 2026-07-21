@@ -290,29 +290,27 @@ def handle_help(chat_id):
     reply(chat_id, msg)
 
 
-# ============================================================
-# مساعد: تحديد الشموع "الفايتة" (الجديدة) لكل رمز منذ آخر تشغيل
-# ============================================================
-# سقف أمان لعدد الشموع يلي منعوّض عليها بتشغيلة وحدة، حتى لو البوت كان طافي
-# لفترة طويلة جدًا (60 شمعة * 30 دقيقة = 30 ساعة تعويض كحد أقصى بكل تشغيلة)
-CATCHUP_MAX_BARS = 60
+def drop_unclosed_candle(df: pd.DataFrame, now):
+    """
+    يشيل الشمعة الأخيرة من df لو لسا ما انقفلت فعليًا (open_time + INTERVAL_MINUTES > الوقت الحالي).
 
-
-def get_new_bar_positions(df, last_seen_str):
-    """يرجع لستة positions (مواقع) بـ df للشموع الأحدث من last_seen_str، مرتبة زمنيًا تصاعديًا.
-    - أول مرة نشوف فيها الرمز (ما فيه last_seen): نرجع بس آخر شمعة (نفس السلوك القديم،
-      حتى ما نفحص 500 شمعة تاريخية دفعة وحدة كإنها "جديدة").
-    - لو البوت كان طافي وفاتته أكثر من شمعة: نرجع كل الشموع الفايتة بالترتيب، مع سقف أمان
-      CATCHUP_MAX_BARS لتفادي معالجة فجوة ضخمة جدًا بتشغيلة وحدة."""
-    n = len(df)
-    if not last_seen_str:
-        return [n - 1]
-    last_seen_ts = pd.Timestamp(last_seen_str)
-    times = df["open_time_utc"]
-    positions = [k for k in range(n) if pd.Timestamp(times.iloc[k]) > last_seen_ts]
-    if len(positions) > CATCHUP_MAX_BARS:
-        positions = positions[-CATCHUP_MAX_BARS:]
-    return positions
+    ليش هاد ضروري: كل منطق الاستراتيجية (check_new_signal, فحص SL/TP/Timeout) بيفترض
+    إن iloc[-1] هي "آخر شمعة مغلقة". لو البوت بيشتغل بدورية أقصر من مدة الشمعة (مثلاً كل
+    15 دقيقة على فريم 30 دقيقة)، وكانت fetch_klines بترجع الشمعة الحالية الغير مكتملة،
+    ممكن نفحص بيانات جزئية (low/high لسا ناقصة) - وأخطر من هيك: أول ما تقفل الشمعة ويفتح
+    وحدة جديدة، الشمعة يلي فاتت فيها لمسة entry1 بتصير iloc[-2] مش iloc[-1] وبتنتفحص نهائيًا.
+    هاد الحارس بيضمن إننا دايمًا نشتغل على شمعة مقفولة، بغض النظر عن دورية التشغيل أو
+    تطبيق fetch_klines.
+    """
+    if df is None or len(df) == 0:
+        return df
+    last_open = pd.Timestamp(df.iloc[-1]["open_time_utc"])
+    if last_open.tzinfo is None:
+        last_open = last_open.tz_localize("UTC")
+    close_time = last_open + timedelta(minutes=INTERVAL_MINUTES)
+    if close_time > now:
+        return df.iloc[:-1].reset_index(drop=True)
+    return df
 
 
 # ============================================================
@@ -324,6 +322,8 @@ def main():
     state = load_state()
     print(f"عدد الرموز المراقبة: {len(symbols)}")
 
+    now = datetime.now(timezone.utc)
+
     # ---------- 0) معالجة أي أوامر تفاعلية جديدة ----------
     handle_commands(state)
 
@@ -333,6 +333,9 @@ def main():
         df = fetch_klines(sym, interval=INTERVAL, limit=500)
         sleep_safe(0.2)
         if df is None or len(df) < 250:
+            continue
+        df = drop_unclosed_candle(df, now)
+        if len(df) < 250:
             continue
         df = strategy.compute_all_indicators(df)
         data[sym] = df
@@ -345,138 +348,153 @@ def main():
     pending_setups = state["pending_setups"]
     open_positions = state["open_positions"]
 
-    now = datetime.now(timezone.utc)
     month_stopped = update_monthly_guard(state, now)
 
-    # ---------- 2) تحديد الشموع الفايتة لكل رمز، ومعرفة هل البوت كان متوقف فترة ----------
-    # كل رمز يخزن state["last_candle_seen"][sym] = آخر شمعة اتفحصت فعليًا. لو البوت
-    # طفى (مثلاً جيتهاب اكشنز ما اشتغل، أو تأخر) وفاتته أكثر من شمعة، منفحصهم كلهم
-    # بالترتيب الزمني (مش بس آخر وحدة) - هيك ما تفوت ولا إشارة دخول ولا SL ولا TP.
-    new_bar_positions = {sym: get_new_bar_positions(df, state["last_candle_seen"].get(sym)) for sym, df in data.items()}
-    max_gap = max((len(v) for v in new_bar_positions.values()), default=0)
+    # ---------- 2) فحص الصفقات المفتوحة فعليًا (SL / TP / Timeout) ----------
+    for sym in list(open_positions.keys()):
+        if sym not in data:
+            continue
+        pos = open_positions[sym]
+        last = data[sym].iloc[-1]
+        signal_time = pd.Timestamp(pos["signal_time"])
+        bars_since_signal = int((last["open_time_utc"] - signal_time) / pd.Timedelta(minutes=INTERVAL_MINUTES))
 
-    if max_gap > 1:
-        push(
-            f"⏸️ <b>تعويض تشغيل فايت</b>\n"
-            f"يبدو إن البوت كان متوقف أو ما اشتغل بوقته (لحد {max_gap} شمعة فايتة على بعض الرموز).\n"
-            f"جاري فحص كل شمعة فايتة بالترتيب الزمني (دخول Limit / SL / TP / إشارات جديدة) بدل ما نتجاهلها."
-        )
+        exit_price, exit_reason = None, None
+        if last["low"] <= pos["sl"]:
+            exit_price, exit_reason = pos["sl"], "SL 🔴"
+        elif last["high"] >= pos["tp"]:
+            exit_price, exit_reason = pos["tp"], "TP 🟢"
+        elif bars_since_signal > strategy.MAX_BARS_ACTIVE:
+            exit_price, exit_reason = last["close"], "Timeout ⏱️"
 
-    # ---------- 3) المرور على كل رمز، شمعة-شمعة، بالترتيب الزمني ----------
+        if exit_price is not None:
+            _close_position(state, sym, pos, exit_price, exit_reason, last["open_time_utc"])
+            if exit_reason.startswith("SL"):
+                set_symbol_cooldown(state, sym, last["open_time_utc"])
+            del open_positions[sym]
+
+    # ---------- 3) فحص الأوامر المعلّقة (تنفيذ Limit أو إلغاء بسبب Timeout) ----------
+    # نجمع كل اللي بيصير قابل للتنفيذ هالدورة، ونرتبهم حسب السكور لو المحفظة مزدحمة
+    fillable = []
+    for sym in list(pending_setups.keys()):
+        if sym not in data:
+            continue
+        p = pending_setups[sym]
+        last = data[sym].iloc[-1]
+        signal_time = pd.Timestamp(p["signal_time"])
+        bars_since_signal = int((last["open_time_utc"] - signal_time) / pd.Timedelta(minutes=INTERVAL_MINUTES))
+
+        if last["low"] <= p["entry1"]:
+            fillable.append((sym, p, last))
+        elif bars_since_signal > strategy.MAX_BARS_ACTIVE:
+            del pending_setups[sym]
+            log_signal(state, "إلغاء", sym, "انتهى وقت الأمر المعلّق بدون تنفيذ")
+            time_str = pd.Timestamp(last["open_time_utc"]).strftime("%d %b %Y • %H:%M")
+            push(
+                f"⌛ <b>انتهى الأمر المعلّق بدون تنفيذ</b>\n"
+                f"🪙 <b>{sym}</b>\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"💰 كان السعر المطلوب (Limit): <b>{fmt_price(p['entry1'])}</b>\n"
+                f"📊 السعر لم يرتد للمس منطقة الدخول خلال {strategy.MAX_BARS_ACTIVE} شمعة\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"🕒 {time_str} UTC"
+            )
+
+    fillable.sort(key=lambda x: x[1]["score"], reverse=True)
+    for sym, p, last in fillable:
+        del pending_setups[sym]
+
+        if month_stopped:
+            log_signal(state, "إلغاء", sym, "اترفض التنفيذ - الوقف الشهري مفعّل")
+            continue
+
+        available_slots = strategy.MAX_CONCURRENT_TRADES - len(open_positions)
+        if available_slots <= 0:
+            log_signal(state, "إلغاء", sym, "اترفض التنفيذ - المحفظة ممتلئة (3 صفقات)")
+            continue
+
+        entry_price = p["entry1"]
+        # حجم الصفقة يتحدد وقت التنفيذ (الفتح) ويتثبّت لحد الإغلاق، بسقف أقصى بالدولار
+        position_dollars = min(state["balance"] * strategy.POSITION_SIZE_PCT, strategy.MAX_POSITION_SIZE_USD)
+        # نفس منطق الباكتست: نتحقق فورًا هل نفس الشمعة يلي نفّذت فيها لمست SL أو TP كمان
+        exit_price, exit_reason = None, None
+        if last["low"] <= p["sl"]:
+            exit_price, exit_reason = p["sl"], "SL 🔴"
+        elif last["high"] >= p["tp"]:
+            exit_price, exit_reason = p["tp"], "TP 🟢"
+
+        if exit_price is not None:
+            # تنفيذ وإغلاق بنفس الشمعة
+            _close_position(state, sym, {
+                "signal_time": p["signal_time"], "entry_time": str(last["open_time_utc"]),
+                "entry_price": entry_price, "sl": p["sl"], "tp": p["tp"], "score": p["score"],
+                "position_dollars": position_dollars,
+            }, exit_price, exit_reason, last["open_time_utc"])
+            if exit_reason.startswith("SL"):
+                set_symbol_cooldown(state, sym, last["open_time_utc"])
+        else:
+            open_positions[sym] = {
+                "signal_time": p["signal_time"],
+                "entry_time": str(last["open_time_utc"]),
+                "entry_price": entry_price,
+                "sl": p["sl"], "tp": p["tp"], "score": p["score"],
+                "position_dollars": position_dollars,
+            }
+            time_str = pd.Timestamp(last["open_time_utc"]).strftime("%d %b %Y • %H:%M")
+            push(
+                f"📥 <b>تم تنفيذ الأمر</b>\n"
+                f"🪙 <b>{sym}</b>\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"💰 سعر التنفيذ: <b>{fmt_price(entry_price)}</b>\n"
+                f"🛑 وقف الخسارة: <b>{fmt_price(p['sl'])}</b>\n"
+                f"🎯 جني الأرباح: <b>{fmt_price(p['tp'])}</b>\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"📈 <a href=\"{tv_link(sym)}\">فتح الشارت على TradingView</a>\n"
+                f"🕒 {time_str} UTC"
+            )
+            log_signal(state, "تنفيذ", sym, f"دخول عند {fmt_price(entry_price)}")
+
+    # ---------- 4) فحص إشارات BOS+OB جديدة (بس على رموز خالية من setup حاليًا) ----------
     for sym, df in data.items():
-        positions = new_bar_positions.get(sym, [])
-        if not positions:
-            continue  # نفس الشمعة يلي فحصناها آخر مرة - ما فيه شي جديد، ما منكرر الفحص
+        if sym in open_positions or sym in pending_setups:
+            continue
+        last_seen = state["last_candle_seen"].get(sym)
+        candle_key = str(df.iloc[-1]["open_time_utc"])
+        if last_seen == candle_key:
+            continue
 
-        for pos_idx in positions:
-            bar = df.iloc[pos_idx]
-            bar_time = bar["open_time_utc"]
+        if month_stopped:
+            continue
+        if is_symbol_in_cooldown(state, sym, now):
+            continue
 
-            # --- أ) عنده صفقة مفتوحة فعلاً: فحص SL/TP/Timeout على هالشمعة بالذات ---
-            if sym in open_positions:
-                p = open_positions[sym]
-                signal_time = pd.Timestamp(p["signal_time"])
-                bars_since_signal = int((bar_time - signal_time) / pd.Timedelta(minutes=INTERVAL_MINUTES))
+        sig = strategy.check_new_signal(df)
+        if sig:
+            pending_setups[sym] = {
+                "signal_time": str(sig["signal_time"]),
+                "entry1": sig["entry1"], "sl": sig["sl"], "tp": sig["tp"],
+                "score": sig["score"],
+            }
+            time_str = pd.Timestamp(sig["signal_time"]).strftime("%d %b %Y • %H:%M")
+            push(
+                f"🚨 <b>إشارة دخول جديدة</b>\n"
+                f"🪙 <b>{sym}</b>\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"💰 سعر الدخول (Limit): <b>{fmt_price(sig['entry1'])}</b>\n"
+                f"🛑 وقف الخسارة: <b>{fmt_price(sig['sl'])}</b>\n"
+                f"🎯 جني الأرباح: <b>{fmt_price(sig['tp'])}</b>\n"
+                f"📦 حجم الصفقة: <b>{strategy.POSITION_SIZE_PCT*100:.0f}% من رأس المال</b>\n"
+                f"📊 قوة الإشارة: <b>{sig['score']*100:.0f}%</b>\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"📈 <a href=\"{tv_link(sym)}\">فتح الشارت على TradingView</a>\n"
+                f"🕒 {time_str} UTC\n"
+                f"⏳ بانتظار لمس سعر الدخول (حد أقصى {strategy.MAX_BARS_ACTIVE} شمعة)\n"
+                f"⚠️ توصية آلية من نظام باكتست، وليست نصيحة مالية."
+            )
+            log_signal(state, "إشارة", sym, f"Setup معلّق عند {fmt_price(sig['entry1'])}")
 
-                exit_price, exit_reason = None, None
-                if bar["low"] <= p["sl"]:
-                    exit_price, exit_reason = p["sl"], "SL 🔴"
-                elif bar["high"] >= p["tp"]:
-                    exit_price, exit_reason = p["tp"], "TP 🟢"
-                elif bars_since_signal > strategy.MAX_BARS_ACTIVE:
-                    exit_price, exit_reason = bar["close"], "Timeout ⏱️"
-
-                if exit_price is not None:
-                    _close_position(state, sym, p, exit_price, exit_reason, bar_time)
-                    if exit_reason.startswith("SL"):
-                        set_symbol_cooldown(state, sym, bar_time)
-                    del open_positions[sym]
-                continue  # ما منفحص Pending ولا إشارة جديدة بنفس الشمعة يلي فيها صفقة مفتوحة
-
-            # --- ب) عنده أمر معلّق (Limit): فحص تنفيذ أو انتهاء صلاحية على هالشمعة ---
-            if sym in pending_setups:
-                p = pending_setups[sym]
-                signal_time = pd.Timestamp(p["signal_time"])
-                bars_since_signal = int((bar_time - signal_time) / pd.Timedelta(minutes=INTERVAL_MINUTES))
-
-                if bar["low"] <= p["entry1"]:
-                    del pending_setups[sym]
-
-                    if month_stopped:
-                        log_signal(state, "إلغاء", sym, "اترفض التنفيذ - الوقف الشهري مفعّل")
-                        continue
-
-                    if len(open_positions) >= strategy.MAX_CONCURRENT_TRADES:
-                        log_signal(state, "إلغاء", sym, "اترفض التنفيذ - المحفظة ممتلئة (3 صفقات)")
-                        continue
-
-                    entry_price = p["entry1"]
-                    position_dollars = min(state["balance"] * strategy.POSITION_SIZE_PCT, strategy.MAX_POSITION_SIZE_USD)
-
-                    # نفس منطق الباكتست: نتحقق فورًا هل نفس الشمعة يلي نفّذت فيها لمست SL أو TP كمان
-                    exit_price, exit_reason = None, None
-                    if bar["low"] <= p["sl"]:
-                        exit_price, exit_reason = p["sl"], "SL 🔴"
-                    elif bar["high"] >= p["tp"]:
-                        exit_price, exit_reason = p["tp"], "TP 🟢"
-
-                    if exit_price is not None:
-                        _close_position(state, sym, {
-                            "signal_time": p["signal_time"], "entry_time": str(bar_time),
-                            "entry_price": entry_price, "sl": p["sl"], "tp": p["tp"], "score": p["score"],
-                            "position_dollars": position_dollars,
-                        }, exit_price, exit_reason, bar_time)
-                        if exit_reason.startswith("SL"):
-                            set_symbol_cooldown(state, sym, bar_time)
-                    else:
-                        open_positions[sym] = {
-                            "signal_time": p["signal_time"],
-                            "entry_time": str(bar_time),
-                            "entry_price": entry_price,
-                            "sl": p["sl"], "tp": p["tp"], "score": p["score"],
-                            "position_dollars": position_dollars,
-                        }
-                        time_str = pd.Timestamp(bar_time).strftime("%d %b %Y • %H:%M")
-                        push(
-                            f"📥 <b>تم تنفيذ الأمر</b>\n"
-                            f"🪙 <b>{sym}</b>\n"
-                            f"━━━━━━━━━━━━━━━━━━\n"
-                            f"💰 سعر التنفيذ: <b>{fmt_price(entry_price)}</b>\n"
-                            f"🛑 وقف الخسارة: <b>{fmt_price(p['sl'])}</b>\n"
-                            f"🎯 جني الأرباح: <b>{fmt_price(p['tp'])}</b>\n"
-                            f"━━━━━━━━━━━━━━━━━━\n"
-                            f"📈 <a href=\"{tv_link(sym)}\">فتح الشارت على TradingView</a>\n"
-                            f"🕒 {time_str} UTC"
-                        )
-                        log_signal(state, "تنفيذ", sym, f"دخول عند {fmt_price(entry_price)}")
-                elif bars_since_signal > strategy.MAX_BARS_ACTIVE:
-                    del pending_setups[sym]
-                    log_signal(state, "إلغاء", sym, "انتهى وقت الأمر المعلّق بدون تنفيذ")
-                continue
-
-            # --- ج) ما عنده لا صفقة ولا أمر معلّق: فحص إشارة BOS+OB جديدة على هالشمعة ---
-            if month_stopped:
-                continue
-            if is_symbol_in_cooldown(state, sym, bar_time):
-                continue
-            # نحترم سقف الصفقات هون كمان: لو (المفتوحة + المعلّقة) وصلت السقف، ما منبعت
-            # إشارات جديدة أصلاً - حتى ما توصلك إشعارات "دخول جديد" أكتر من قدرتك الفعلية
-            if len(open_positions) + len(pending_setups) >= strategy.MAX_CONCURRENT_TRADES:
-                continue
-
-            g = df.iloc[: pos_idx + 1]  # نفس منطق check_new_signal الأصلي، بس على شمعة تاريخية بدل آخر وحدة فقط
-            sig = strategy.check_new_signal(g)
-            if sig:
-                pending_setups[sym] = {
-                    "signal_time": str(sig["signal_time"]),
-                    "entry1": sig["entry1"], "sl": sig["sl"], "tp": sig["tp"],
-                    "score": sig["score"],
-                }
-                push(f"👀 عملة {sym} قيد المراقبة\n📈 {tv_link(sym)}")
-                log_signal(state, "إشارة", sym, f"Setup معلّق عند {fmt_price(sig['entry1'])}")
-
-        # خلصنا كل الشموع الفايتة لهالرمز - نحدّث آخر شمعة اتفحصت حتى ما نعيد فحصها مرة ثانية
-        state["last_candle_seen"][sym] = str(df.iloc[positions[-1]]["open_time_utc"])
+    for sym, df in data.items():
+        state["last_candle_seen"][sym] = str(df.iloc[-1]["open_time_utc"])
 
     save_state(state)
     print(f"مفتوحة: {len(open_positions)} | معلّقة: {len(pending_setups)} | الرصيد: ${state['balance']:,.2f}")
