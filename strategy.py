@@ -21,7 +21,7 @@ import pandas as pd
 PIVOT_LEN = 5
 OB_LOOKBACK = 20
 ATR_LEN = 14
-MIN_ATR_PCT = 0.5
+MIN_ATR_PCT = 1.5
 MAX_ATR_PCT = 5.0
 MIN_PULLBACK_PCT = 0.10
 MAX_BARS_ACTIVE = 24          # أقصى عمر للـ setup كامل (من لحظة الإشارة، معلّق أو مفتوح)
