@@ -459,6 +459,10 @@ def main():
                 continue
             if is_symbol_in_cooldown(state, sym, bar_time):
                 continue
+            # نحترم سقف الصفقات هون كمان: لو (المفتوحة + المعلّقة) وصلت السقف، ما منبعت
+            # إشارات جديدة أصلاً - حتى ما توصلك إشعارات "دخول جديد" أكتر من قدرتك الفعلية
+            if len(open_positions) + len(pending_setups) >= strategy.MAX_CONCURRENT_TRADES:
+                continue
 
             g = df.iloc[: pos_idx + 1]  # نفس منطق check_new_signal الأصلي، بس على شمعة تاريخية بدل آخر وحدة فقط
             sig = strategy.check_new_signal(g)
@@ -468,22 +472,7 @@ def main():
                     "entry1": sig["entry1"], "sl": sig["sl"], "tp": sig["tp"],
                     "score": sig["score"],
                 }
-                time_str = pd.Timestamp(sig["signal_time"]).strftime("%d %b %Y • %H:%M")
-                push(
-                    f"🚨 <b>إشارة دخول جديدة</b>\n"
-                    f"🪙 <b>{sym}</b>\n"
-                    f"━━━━━━━━━━━━━━━━━━\n"
-                    f"💰 سعر الدخول (Limit): <b>{fmt_price(sig['entry1'])}</b>\n"
-                    f"🛑 وقف الخسارة: <b>{fmt_price(sig['sl'])}</b>\n"
-                    f"🎯 جني الأرباح: <b>{fmt_price(sig['tp'])}</b>\n"
-                    f"📦 حجم الصفقة: <b>{strategy.POSITION_SIZE_PCT*100:.0f}% من رأس المال</b>\n"
-                    f"📊 قوة الإشارة: <b>{sig['score']*100:.0f}%</b>\n"
-                    f"━━━━━━━━━━━━━━━━━━\n"
-                    f"📈 <a href=\"{tv_link(sym)}\">فتح الشارت على TradingView</a>\n"
-                    f"🕒 {time_str} UTC\n"
-                    f"⏳ بانتظار لمس سعر الدخول (حد أقصى {strategy.MAX_BARS_ACTIVE} شمعة)\n"
-                    f"⚠️ توصية آلية من نظام باكتست، وليست نصيحة مالية."
-                )
+                push(f"👀 عملة {sym} قيد المراقبة\n📈 {tv_link(sym)}")
                 log_signal(state, "إشارة", sym, f"Setup معلّق عند {fmt_price(sig['entry1'])}")
 
         # خلصنا كل الشموع الفايتة لهالرمز - نحدّث آخر شمعة اتفحصت حتى ما نعيد فحصها مرة ثانية
