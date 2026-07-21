@@ -117,28 +117,6 @@ def log_signal(state, kind, symbol, detail):
     state["signal_history"] = state["signal_history"][:MAX_SIGNAL_HISTORY]
 
 
-def update_monthly_guard(state, now):
-    """يحدّث حالة (وقف الشهر) بناءً على الرصيد الحالي مقارنة برصيد بداية الشهر."""
-    month_key = now.strftime("%Y-%m")
-    if state.get("month_key") != month_key:
-        state["month_key"] = month_key
-        state["month_start_balance"] = state.get("balance", STARTING_BALANCE)
-        state["month_stopped"] = False
-
-    start = state.get("month_start_balance", STARTING_BALANCE)
-    balance = state.get("balance", STARTING_BALANCE)
-    monthly_return_pct = (balance / start - 1) * 100 if start else 0
-
-    if not state.get("month_stopped") and monthly_return_pct <= strategy.MONTHLY_STOP_PCT:
-        state["month_stopped"] = True
-        push(
-            f"🛑 <b>وقف شهري مفعّل</b>\n"
-            f"الخسارة الشهرية وصلت {monthly_return_pct:.2f}% (الحد {strategy.MONTHLY_STOP_PCT}%)\n"
-            f"لن تُفتح صفقات جديدة لحد نهاية الشهر — الصفقات المفتوحة حاليًا هتكمل عادي."
-        )
-    return state.get("month_stopped", False)
-
-
 def is_symbol_in_cooldown(state, sym, now):
     until_str = state.get("symbol_cooldown_until", {}).get(sym)
     if not until_str:
@@ -190,16 +168,11 @@ def handle_commands(state):
 def handle_balance(state, chat_id):
     balance = state.get("balance", STARTING_BALANCE)
     total_return_pct = (balance - STARTING_BALANCE) / STARTING_BALANCE * 100
-    month_start = state.get("month_start_balance", STARTING_BALANCE)
-    month_return_pct = (balance / month_start - 1) * 100 if month_start else 0
-    status_line = "🛑 موقوف (تعدى حد الخسارة الشهري)" if state.get("month_stopped") else "✅ شغال عادي"
     msg = (
         f"💰 <b>الرصيد الافتراضي الحالي</b>\n"
         f"الرصيد: ${balance:,.2f}\n"
         f"رأس المال الابتدائي: ${STARTING_BALANCE:,.2f}\n"
-        f"العائد التراكمي: {total_return_pct:+.2f}%\n"
-        f"عائد الشهر الحالي: {month_return_pct:+.2f}%\n"
-        f"حالة الدخول الجديد: {status_line}"
+        f"العائد التراكمي: {total_return_pct:+.2f}%"
     )
     reply(chat_id, msg)
 
@@ -290,29 +263,6 @@ def handle_help(chat_id):
     reply(chat_id, msg)
 
 
-def drop_unclosed_candle(df: pd.DataFrame, now):
-    """
-    يشيل الشمعة الأخيرة من df لو لسا ما انقفلت فعليًا (open_time + INTERVAL_MINUTES > الوقت الحالي).
-
-    ليش هاد ضروري: كل منطق الاستراتيجية (check_new_signal, فحص SL/TP/Timeout) بيفترض
-    إن iloc[-1] هي "آخر شمعة مغلقة". لو البوت بيشتغل بدورية أقصر من مدة الشمعة (مثلاً كل
-    15 دقيقة على فريم 30 دقيقة)، وكانت fetch_klines بترجع الشمعة الحالية الغير مكتملة،
-    ممكن نفحص بيانات جزئية (low/high لسا ناقصة) - وأخطر من هيك: أول ما تقفل الشمعة ويفتح
-    وحدة جديدة، الشمعة يلي فاتت فيها لمسة entry1 بتصير iloc[-2] مش iloc[-1] وبتنتفحص نهائيًا.
-    هاد الحارس بيضمن إننا دايمًا نشتغل على شمعة مقفولة، بغض النظر عن دورية التشغيل أو
-    تطبيق fetch_klines.
-    """
-    if df is None or len(df) == 0:
-        return df
-    last_open = pd.Timestamp(df.iloc[-1]["open_time_utc"])
-    if last_open.tzinfo is None:
-        last_open = last_open.tz_localize("UTC")
-    close_time = last_open + timedelta(minutes=INTERVAL_MINUTES)
-    if close_time > now:
-        return df.iloc[:-1].reset_index(drop=True)
-    return df
-
-
 # ============================================================
 # المنطق الرئيسي
 # ============================================================
@@ -321,8 +271,6 @@ def main():
     symbols = load_symbols()
     state = load_state()
     print(f"عدد الرموز المراقبة: {len(symbols)}")
-
-    now = datetime.now(timezone.utc)
 
     # ---------- 0) معالجة أي أوامر تفاعلية جديدة ----------
     handle_commands(state)
@@ -333,9 +281,6 @@ def main():
         df = fetch_klines(sym, interval=INTERVAL, limit=500)
         sleep_safe(0.2)
         if df is None or len(df) < 250:
-            continue
-        df = drop_unclosed_candle(df, now)
-        if len(df) < 250:
             continue
         df = strategy.compute_all_indicators(df)
         data[sym] = df
@@ -348,7 +293,7 @@ def main():
     pending_setups = state["pending_setups"]
     open_positions = state["open_positions"]
 
-    month_stopped = update_monthly_guard(state, now)
+    now = datetime.now(timezone.utc)
 
     # ---------- 2) فحص الصفقات المفتوحة فعليًا (SL / TP / Timeout) ----------
     for sym in list(open_positions.keys()):
@@ -389,24 +334,10 @@ def main():
         elif bars_since_signal > strategy.MAX_BARS_ACTIVE:
             del pending_setups[sym]
             log_signal(state, "إلغاء", sym, "انتهى وقت الأمر المعلّق بدون تنفيذ")
-            time_str = pd.Timestamp(last["open_time_utc"]).strftime("%d %b %Y • %H:%M")
-            push(
-                f"⌛ <b>انتهى الأمر المعلّق بدون تنفيذ</b>\n"
-                f"🪙 <b>{sym}</b>\n"
-                f"━━━━━━━━━━━━━━━━━━\n"
-                f"💰 كان السعر المطلوب (Limit): <b>{fmt_price(p['entry1'])}</b>\n"
-                f"📊 السعر لم يرتد للمس منطقة الدخول خلال {strategy.MAX_BARS_ACTIVE} شمعة\n"
-                f"━━━━━━━━━━━━━━━━━━\n"
-                f"🕒 {time_str} UTC"
-            )
 
     fillable.sort(key=lambda x: x[1]["score"], reverse=True)
     for sym, p, last in fillable:
         del pending_setups[sym]
-
-        if month_stopped:
-            log_signal(state, "إلغاء", sym, "اترفض التنفيذ - الوقف الشهري مفعّل")
-            continue
 
         available_slots = strategy.MAX_CONCURRENT_TRADES - len(open_positions)
         if available_slots <= 0:
@@ -414,8 +345,8 @@ def main():
             continue
 
         entry_price = p["entry1"]
-        # حجم الصفقة يتحدد وقت التنفيذ (الفتح) ويتثبّت لحد الإغلاق، بسقف أقصى بالدولار
-        position_dollars = min(state["balance"] * strategy.POSITION_SIZE_PCT, strategy.MAX_POSITION_SIZE_USD)
+        # حجم الصفقة يتحدد وقت التنفيذ (الفتح) ويتثبّت لحد الإغلاق - نسبة من الرصيد، بدون سقف
+        position_dollars = state["balance"] * strategy.POSITION_SIZE_PCT
         # نفس منطق الباكتست: نتحقق فورًا هل نفس الشمعة يلي نفّذت فيها لمست SL أو TP كمان
         exit_price, exit_reason = None, None
         if last["low"] <= p["sl"]:
@@ -463,8 +394,6 @@ def main():
         if last_seen == candle_key:
             continue
 
-        if month_stopped:
-            continue
         if is_symbol_in_cooldown(state, sym, now):
             continue
 
@@ -510,7 +439,7 @@ def _close_position(state, sym, pos, exit_price, exit_reason, exit_time):
     position_dollars = pos.get("position_dollars")
     if position_dollars is None:
         # احتياط لصفقات قديمة محفوظة في state_bos.json قبل هذا التصحيح
-        position_dollars = min(state["balance"] * strategy.POSITION_SIZE_PCT, strategy.MAX_POSITION_SIZE_USD)
+        position_dollars = state["balance"] * strategy.POSITION_SIZE_PCT
     pnl_dollars = position_dollars * pnl_pct / 100
     state["balance"] = state.get("balance", STARTING_BALANCE) + pnl_dollars
 
