@@ -23,14 +23,12 @@ OB_LOOKBACK = 20
 ATR_LEN = 14
 MIN_ATR_PCT = 0.5
 MAX_ATR_PCT = 5.0
-MIN_PULLBACK_PCT = 0.3
+MIN_PULLBACK_PCT = 0.10
 MAX_BARS_ACTIVE = 24          # أقصى عمر للـ setup كامل (من لحظة الإشارة، معلّق أو مفتوح)
 
 # --- SL/TP مبنيين على ATR (بدل مدى الـ Order Block + RR ثابت) ---
 ATR_MULT_SL = 1.0             # SL = entry1 - ATR_MULT_SL × ATR
 ATR_MULT_TP = 1.0             # TP = entry1 + ATR_MULT_TP × ATR
-MIN_TARGET_PCT = 1.5          # أقل مسافة هدف مسموحة (%) - فوق منطق ATR
-MIN_STOP_PCT = 1.0            # أقل مسافة ستوب مسموحة (%) - فوق منطق ATR
 
 COMMISSION_PCT_PER_SIDE = 0.10
 SLIPPAGE_PCT_PER_SIDE = 0.05
@@ -110,6 +108,10 @@ def check_new_signal(g: pd.DataFrame):
     if not bullish_bos:
         return None
 
+    atr_ok = MIN_ATR_PCT <= atr_pct[i] <= MAX_ATR_PCT
+    if not atr_ok:
+        return None
+
     ob_index = None
     for k in range(1, OB_LOOKBACK + 1):
         if i - k < 0:
@@ -121,26 +123,13 @@ def check_new_signal(g: pd.DataFrame):
         return None
 
     entry1 = high[i - ob_index]
-
-    # فحص ATR% محسوب من entry1 (نفس الأساس المستخدم فعليًا لحساب SL/TP)
-    # مش من close[i] - لأن entry1 هو مرجع كل الحسابات اللاحقة (sl/tp/risk)
-    entry_atr_pct = atr[i] / entry1 * 100
-    atr_ok = MIN_ATR_PCT <= entry_atr_pct <= MAX_ATR_PCT
-    if not atr_ok:
-        return None
-
     pullback_ok = entry1 <= close[i] * (1 - MIN_PULLBACK_PCT / 100)
     if not pullback_ok:
         return None
 
     # ------ SL/TP مبنيين على ATR بدل مدى الـ Order Block ------
-    sl_dist = atr[i] * ATR_MULT_SL
-    tp_dist = atr[i] * ATR_MULT_TP
-    # فرض حد أدنى لمسافة الهدف/الستوب (%) فوق اللي محسوب من ATR
-    sl_dist = max(sl_dist, entry1 * MIN_STOP_PCT / 100)
-    tp_dist = max(tp_dist, entry1 * MIN_TARGET_PCT / 100)
-    sl = entry1 - sl_dist
-    tp = entry1 + tp_dist
+    sl = entry1 - atr[i] * ATR_MULT_SL
+    tp = entry1 + atr[i] * ATR_MULT_TP
     # -----------------------------------------------------------
     risk = entry1 - sl
     if risk <= 0:
@@ -163,8 +152,3 @@ def check_new_signal(g: pd.DataFrame):
         "tp": float(tp),
         "score": float(score),
     }
-
-# ==== إضافة الثوابت الناقصة (مذكورة بـ run_bot-1.py بس غير معرّفة بالملف الأصلي) ====
-# بدون سقف دولاري وبدون وقف شهري (بطلب المستخدم) - حجم الصفقة % بحت من الرصيد المتزايد
-MAX_POSITION_SIZE_USD = float("inf")
-MONTHLY_STOP_PCT = float("-inf")
