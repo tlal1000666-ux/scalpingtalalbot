@@ -23,7 +23,7 @@ OB_LOOKBACK = 20
 ATR_LEN = 14
 MIN_ATR_PCT = 0.5
 MAX_ATR_PCT = 5.0
-MIN_PULLBACK_PCT = 0.10
+MIN_PULLBACK_PCT = 0.3
 MAX_BARS_ACTIVE = 24          # أقصى عمر للـ setup كامل (من لحظة الإشارة، معلّق أو مفتوح)
 
 # --- SL/TP مبنيين على ATR (بدل مدى الـ Order Block + RR ثابت) ---
@@ -110,10 +110,6 @@ def check_new_signal(g: pd.DataFrame):
     if not bullish_bos:
         return None
 
-    atr_ok = MIN_ATR_PCT <= atr_pct[i] <= MAX_ATR_PCT
-    if not atr_ok:
-        return None
-
     ob_index = None
     for k in range(1, OB_LOOKBACK + 1):
         if i - k < 0:
@@ -125,6 +121,14 @@ def check_new_signal(g: pd.DataFrame):
         return None
 
     entry1 = high[i - ob_index]
+
+    # فحص ATR% محسوب من entry1 (نفس الأساس المستخدم فعليًا لحساب SL/TP)
+    # مش من close[i] - لأن entry1 هو مرجع كل الحسابات اللاحقة (sl/tp/risk)
+    entry_atr_pct = atr[i] / entry1 * 100
+    atr_ok = MIN_ATR_PCT <= entry_atr_pct <= MAX_ATR_PCT
+    if not atr_ok:
+        return None
+
     pullback_ok = entry1 <= close[i] * (1 - MIN_PULLBACK_PCT / 100)
     if not pullback_ok:
         return None
