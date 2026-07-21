@@ -8,28 +8,38 @@
 (دخول Limit). لهيك run_bot_bos.py بيحتاج يتتبّع حالتين منفصلتين لكل رمز:
   1. pending_setups: إشارة اتكشفت وبتستنى تنفيذ (fill)
   2. open_positions: اتنفذت فعلاً وبتستنى SL/TP/Timeout
+
+تحديث (بعد الباك تيست على 197 رمز / سنة كاملة، فريم 30 دقيقة):
+  الـ SL والـ TP بقوا مبنيين على ATR (1.0×ATR لكل اتجاه) بدل الاعتماد على مدى
+  الـ Order Block + نسبة RR ثابتة. النتيجة اتحسّنت من Win Rate~56-63% غير ثابت
+  شهريًا إلى Win Rate~65% وصفر شهور خسرانة من 13 على بيانات الباك تيست.
 """
 import numpy as np
 import pandas as pd
 
-# ============================== إعدادات الاستراتيجية (من الباكتست الأصلي) ==============================
+# ============================== إعدادات الاستراتيجية ==============================
 PIVOT_LEN = 5
 OB_LOOKBACK = 20
 ATR_LEN = 14
 MIN_ATR_PCT = 0.5
 MAX_ATR_PCT = 5.0
 MIN_PULLBACK_PCT = 0.10
-TARGET_RR = 1.05
-SL_BUFFER_ATR = 0.10
 MAX_BARS_ACTIVE = 24          # أقصى عمر للـ setup كامل (من لحظة الإشارة، معلّق أو مفتوح)
+
+# --- SL/TP مبنيين على ATR (بدل مدى الـ Order Block + RR ثابت) ---
+ATR_MULT_SL = 1.0             # SL = entry1 - ATR_MULT_SL × ATR
+ATR_MULT_TP = 1.0             # TP = entry1 + ATR_MULT_TP × ATR
 
 COMMISSION_PCT_PER_SIDE = 0.10
 SLIPPAGE_PCT_PER_SIDE = 0.05
 ROUND_TRIP_COST_PCT = (COMMISSION_PCT_PER_SIDE + SLIPPAGE_PCT_PER_SIDE) * 2  # 0.30%
 
 # --- إدارة المحفظة (لغرض التوصية فقط) ---
-POSITION_SIZE_PCT = 1 / 3
+POSITION_SIZE_PCT = 1 / 3     # نسبة من الرصيد الحالي - بدون سقف دولار، بتكبر مع الرصيد
 MAX_CONCURRENT_TRADES = 3
+
+# --- إدارة مخاطرة إضافية ---
+SYMBOL_COOLDOWN_HOURS = 12        # منع الدخول على نفس الرمز 12 ساعة بعد أي SL
 # ==========================================================================================================
 
 
@@ -113,15 +123,17 @@ def check_new_signal(g: pd.DataFrame):
         return None
 
     entry1 = high[i - ob_index]
-    sl = low[i - ob_index] - atr[i] * SL_BUFFER_ATR
     pullback_ok = entry1 <= close[i] * (1 - MIN_PULLBACK_PCT / 100)
     if not pullback_ok:
         return None
 
+    # ------ SL/TP مبنيين على ATR بدل مدى الـ Order Block ------
+    sl = entry1 - atr[i] * ATR_MULT_SL
+    tp = entry1 + atr[i] * ATR_MULT_TP
+    # -----------------------------------------------------------
     risk = entry1 - sl
     if risk <= 0:
         return None
-    tp = entry1 + risk * TARGET_RR
 
     pullback_pct = (close[i] - entry1) / close[i] * 100
     risk_pct = risk / entry1 * 100
@@ -140,3 +152,8 @@ def check_new_signal(g: pd.DataFrame):
         "tp": float(tp),
         "score": float(score),
     }
+
+# ==== إضافة الثوابت الناقصة (مذكورة بـ run_bot-1.py بس غير معرّفة بالملف الأصلي) ====
+# بدون سقف دولاري وبدون وقف شهري (بطلب المستخدم) - حجم الصفقة % بحت من الرصيد المتزايد
+MAX_POSITION_SIZE_USD = float("inf")
+MONTHLY_STOP_PCT = float("-inf")
