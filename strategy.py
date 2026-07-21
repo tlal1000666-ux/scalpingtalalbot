@@ -29,6 +29,8 @@ MAX_BARS_ACTIVE = 24          # أقصى عمر للـ setup كامل (من لح
 # --- SL/TP مبنيين على ATR (بدل مدى الـ Order Block + RR ثابت) ---
 ATR_MULT_SL = 1.0             # SL = entry1 - ATR_MULT_SL × ATR
 ATR_MULT_TP = 1.0             # TP = entry1 + ATR_MULT_TP × ATR
+MIN_TARGET_PCT = 1.5          # أقل مسافة هدف مسموحة (%) - فوق منطق ATR
+MIN_STOP_PCT = 1.0            # أقل مسافة ستوب مسموحة (%) - فوق منطق ATR
 
 COMMISSION_PCT_PER_SIDE = 0.10
 SLIPPAGE_PCT_PER_SIDE = 0.05
@@ -128,8 +130,13 @@ def check_new_signal(g: pd.DataFrame):
         return None
 
     # ------ SL/TP مبنيين على ATR بدل مدى الـ Order Block ------
-    sl = entry1 - atr[i] * ATR_MULT_SL
-    tp = entry1 + atr[i] * ATR_MULT_TP
+    sl_dist = atr[i] * ATR_MULT_SL
+    tp_dist = atr[i] * ATR_MULT_TP
+    # فرض حد أدنى لمسافة الهدف/الستوب (%) فوق اللي محسوب من ATR
+    sl_dist = max(sl_dist, entry1 * MIN_STOP_PCT / 100)
+    tp_dist = max(tp_dist, entry1 * MIN_TARGET_PCT / 100)
+    sl = entry1 - sl_dist
+    tp = entry1 + tp_dist
     # -----------------------------------------------------------
     risk = entry1 - sl
     if risk <= 0:
