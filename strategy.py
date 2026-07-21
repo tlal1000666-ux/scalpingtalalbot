@@ -1,63 +1,35 @@
 """
-منطق الاستراتيجية - نفس المعاملات المستخدمة بالباكتست بالضبط (بدون أي تعديل)
-مرجع: backtest_final_strategy_v4_optimized.py
+منطق استراتيجية BOS + Order Block (نسخة حية - سببية بالكامل، بدون أي نظر للمستقبل)
+مرجع الباكتست: backtest_bos_orderblock_scored.py
+
+الفرق الجوهري عن استراتيجية Mean Reversion القديمة: هذه الاستراتيجية صفقاتها
+Limit Order مش Market — الإشارة (BOS) بتفتح "إعداد معلّق" (pending setup)،
+والصفقة بتتفعّل فقط لو السعر رجع لمس سعر الدخول المحدد خلال MAX_BARS_ACTIVE شمعة.
 """
 import numpy as np
 import pandas as pd
 
-# --- المؤشرات ---
-EMA_FAST, EMA_MID, EMA_SLOW = 9, 21, 50
-VWAP_WINDOW = 48
-RSI_PERIOD = 14
-MACD_FAST, MACD_SLOW, MACD_SIGNAL = 12, 26, 9
-BB_PERIOD, BB_STD = 20, 2
-STOCH_PERIOD = 14
-CCI_PERIOD = 20
-WILLR_PERIOD = 14
-ATR_PERIOD = 14
-SWING_WINDOW = 5
+# --- إعدادات الاستراتيجية (مطابقة تمامًا لملف الباكتست المُتحقق منه) ---
+PIVOT_LEN = 5              # طول الفراكتال لتحديد Swing High
+OB_LOOKBACK = 20           # أقصى عدد شموع للبحث عن Order Block قبل شمعة BOS
+ATR_LEN = 14
+MIN_ATR_PCT = 0.5          # % - أقل تقلب مقبول
+MAX_ATR_PCT = 5.0          # % - أعلى تقلب مقبول
+MIN_PULLBACK_PCT = 0.10    # % - أقل مسافة بين قمة الـOB والسعر الحالي
+TARGET_RR = 1.05           # نسبة الهدف للمخاطرة
+SL_BUFFER_ATR = 0.10       # هامش إضافي تحت قاع الـOB بوحدات ATR
+MAX_BARS_ACTIVE = 24       # أقصى عدد شموع لانتظار التنفيذ أو إغلاق الصفقة زمنيًا
 
-# --- شروط الدخول ---
-RSI_THRESHOLD = 30
-SWING_LOW_DIST_MIN = 0.0
-SWING_LOW_DIST_MAX = 1.0
-MIN_CONFLUENCE = 2
-CCI_ENTRY_THRESHOLD = -180
+# --- تكاليف التنفيذ الواقعية ---
+COMMISSION_PCT_PER_SIDE = 0.10   # % عمولة المنصة لكل جهة (دخول + خروج = 0.20% إجمالي)
+SLIPPAGE_PCT_PER_SIDE = 0.05     # % انزلاق سعري متوقع لكل جهة (أوامر السوق/التنفيذ الفعلي غالبًا أسوأ من السعر النظري)
+# التكلفة الكاملة لدورة كاملة (دخول+خروج): (COMMISSION + SLIPPAGE) * 2
+ROUND_TRIP_COST_PCT = (COMMISSION_PCT_PER_SIDE + SLIPPAGE_PCT_PER_SIDE) * 2
 
-# --- فلتر نظام السوق ---
-MARKET_REGIME_LOOKBACK_BARS = 96    # يومين على فريم 30m
-MARKET_REGIME_THRESHOLD = -5.0
-
-# --- إدارة الصفقة ---
-SL_ATR_MULT = 3.41
-TP_ATR_MULT = 2.26
-TIME_STOP_BARS = 4
-COOLDOWN_BARS_AFTER_TRADE = 4
-
-# --- إدارة المحفظة (لغرض التوصية فقط) ---
-POSITION_SIZE_PCT = 0.33
+# --- إدارة المحفظة ---
+STARTING_BALANCE = 10000.0
 MAX_CONCURRENT_TRADES = 3
-CROWD_FILTER_MAX_SIGNALS = 8
-
-
-def ema(series, period):
-    return series.ewm(span=period, adjust=False).mean()
-
-
-def compute_rsi(close, period=14):
-    delta = close.diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-    avg_gain = gain.ewm(alpha=1 / period, adjust=False).mean()
-    avg_loss = loss.ewm(alpha=1 / period, adjust=False).mean()
-    rs = avg_gain / avg_loss
-    return 100 - (100 / (1 + rs))
-
-
-def compute_macd_hist(close, fast=12, slow=26, signal=9):
-    macd_line = ema(close, fast) - ema(close, slow)
-    signal_line = ema(macd_line, signal)
-    return macd_line - signal_line
+POSITION_SIZE_PCT = 1 / 3
 
 
 def compute_atr(high, low, close, period=14):
@@ -66,97 +38,121 @@ def compute_atr(high, low, close, period=14):
     return tr.ewm(alpha=1 / period, adjust=False).mean()
 
 
-def compute_bollinger(close, period=20, mult=2):
-    mid = close.rolling(period).mean()
-    std = close.rolling(period).std()
-    return mid + mult * std, mid, mid - mult * std
-
-
-def compute_stochastic_k(high, low, close, period=14):
-    lowest = low.rolling(period).min()
-    highest = high.rolling(period).max()
-    return 100 * (close - lowest) / (highest - lowest)
-
-
-def compute_cci(high, low, close, period=20):
-    tp = (high + low + close) / 3
-    sma = tp.rolling(period).mean()
-    mad = tp.rolling(period).apply(lambda x: np.abs(x - x.mean()).mean(), raw=True)
-    return (tp - sma) / (0.015 * mad)
-
-
-def compute_williams_r(high, low, close, period=14):
-    highest = high.rolling(period).max()
-    lowest = low.rolling(period).min()
-    return -100 * (highest - close) / (highest - lowest)
-
-
-def compute_vwap_rolling(high, low, close, volume, window=48):
-    typical_price = (high + low + close) / 3
-    return (typical_price * volume).rolling(window).sum() / volume.rolling(window).sum()
-
-
-def compute_swing_low_distance_pct(low, close, window=5):
-    is_swing_low = low == low.rolling(window * 2 + 1, center=True, min_periods=window * 2 + 1).min()
-    swing_low_price = low.where(is_swing_low).ffill()
-    return (close - swing_low_price) / swing_low_price * 100
+def compute_pivot_high_raw(high, length):
+    """يطابق ta.pivothigh(high, length, length): قمة "خام" تحتاج بيانات مستقبلية للتأكيد."""
+    is_pivot = high == high.rolling(length * 2 + 1, center=True, min_periods=length * 2 + 1).max()
+    return high.where(is_pivot)
 
 
 def compute_all_indicators(g: pd.DataFrame) -> pd.DataFrame:
-    """يحسب كل المؤشرات لرمز واحد. g يجب أن تكون مرتبة زمنيًا وتحتوي open/high/low/close/volume."""
+    """
+    يحسب كل المؤشرات لرمز واحد. g يجب أن تكون مرتبة زمنيًا وتحتوي open/high/low/close.
+
+    ⚠️ ملاحظة سببية مهمة: last_swing_high[i] بيُحسب من pivot_high_raw[i-PIVOT_LEN]،
+    يعني بيحتاج بيانات لغاية index i بالظبط (مفيش أي نظر للمستقبل بالنسبة لآخر شمعة
+    مغلقة "i" وقت الفحص الحي) — نفس المنطق المُتحقق منه في الباكتست بالضبط.
+    """
     g = g.sort_values("open_time_utc").reset_index(drop=True).copy()
-    g["ema_fast"] = ema(g["close"], EMA_FAST)
-    g["ema_mid"] = ema(g["close"], EMA_MID)
-    g["ema_slow"] = ema(g["close"], EMA_SLOW)
-    g["vwap"] = compute_vwap_rolling(g["high"], g["low"], g["close"], g["volume"], VWAP_WINDOW)
-    g["rsi"] = compute_rsi(g["close"], RSI_PERIOD)
-    g["macd_hist"] = compute_macd_hist(g["close"], MACD_FAST, MACD_SLOW, MACD_SIGNAL)
-    _, _, g["bb_low"] = compute_bollinger(g["close"], BB_PERIOD, BB_STD)
-    g["stoch_k"] = compute_stochastic_k(g["high"], g["low"], g["close"], STOCH_PERIOD)
-    g["cci"] = compute_cci(g["high"], g["low"], g["close"], CCI_PERIOD)
-    g["willr"] = compute_williams_r(g["high"], g["low"], g["close"], WILLR_PERIOD)
-    g["atr"] = compute_atr(g["high"], g["low"], g["close"], ATR_PERIOD)
-    g["dist_swing_low_pct"] = compute_swing_low_distance_pct(g["low"], g["close"], SWING_WINDOW)
+    n = len(g)
+
+    g["atr"] = compute_atr(g["high"], g["low"], g["close"], ATR_LEN)
+    g["atr_pct"] = g["atr"] / g["close"] * 100
+
+    pivot_high_raw = compute_pivot_high_raw(g["high"], PIVOT_LEN).values
+    last_swing_high = np.full(n, np.nan)
+    current_val = np.nan
+    for i in range(n):
+        confirm_idx = i - PIVOT_LEN
+        if confirm_idx >= 0 and not np.isnan(pivot_high_raw[confirm_idx]):
+            current_val = pivot_high_raw[confirm_idx]
+        last_swing_high[i] = current_val
+    g["last_swing_high"] = last_swing_high
+
     return g
 
 
-def check_entry_signal(row, market_regime_return):
-    """يفحص شروط الدخول على شمعة واحدة (آخر شمعة مغلقة). يرجع (True/False, score)."""
-    if any(pd.isna(row[c]) for c in ["rsi", "bb_low", "dist_swing_low_pct", "vwap", "atr", "cci", "stoch_k", "willr"]):
-        return False, 0.0
+def check_new_signal(df: pd.DataFrame):
+    """
+    يفحص هل آخر شمعة مغلقة في df كوّنت إشارة BOS + Order Block جديدة.
+    يرجع None لو مفيش إشارة، أو dict فيه (entry1, sl, tp, score) لو في إشارة.
+    """
+    n = len(df)
+    i = n - 1
+    if i < max(ATR_LEN, PIVOT_LEN * 2 + 5):
+        return None
 
-    if market_regime_return is None or market_regime_return < MARKET_REGIME_THRESHOLD:
-        return False, 0.0
+    high = df["high"].values
+    low = df["low"].values
+    close = df["close"].values
+    open_ = df["open"].values
+    atr = df["atr"].values
+    atr_pct = df["atr_pct"].values
+    last_swing_high = df["last_swing_high"].values
 
-    swing_low_ok = SWING_LOW_DIST_MIN <= row["dist_swing_low_pct"] <= SWING_LOW_DIST_MAX
-
-    entry_conditions = (
-        row["close"] < row["vwap"]
-        and row["ema_fast"] < row["ema_mid"] < row["ema_slow"]
-        and row["rsi"] < RSI_THRESHOLD
-        and row["macd_hist"] < 0
-        and row["low"] <= row["bb_low"]
-        and swing_low_ok
-        and row["cci"] <= CCI_ENTRY_THRESHOLD
+    bullish_bos = (
+        not np.isnan(last_swing_high[i])
+        and close[i] > last_swing_high[i]
+        and close[i - 1] <= last_swing_high[i]
     )
-    if not entry_conditions:
-        return False, 0.0
+    if not bullish_bos:
+        return None
 
-    confluence = sum([row["stoch_k"] < 20, row["cci"] < -100, row["willr"] < -80])
-    if confluence < MIN_CONFLUENCE:
-        return False, 0.0
+    atr_ok = MIN_ATR_PCT <= atr_pct[i] <= MAX_ATR_PCT
+    ob_index = None
+    for k in range(1, OB_LOOKBACK + 1):
+        if i - k < 0:
+            break
+        if close[i - k] < open_[i - k]:
+            ob_index = k
+            break
+    if ob_index is None:
+        return None
 
+    entry1 = high[i - ob_index]
+    sl = low[i - ob_index] - atr[i] * SL_BUFFER_ATR
+    pullback_ok = entry1 <= close[i] * (1 - MIN_PULLBACK_PCT / 100)
+    if not (atr_ok and pullback_ok):
+        return None
+
+    risk = entry1 - sl
+    tp = entry1 + risk * TARGET_RR
+
+    # --- السكور: يُستخدم لو أكتر من رمز اتزاحموا على نفس مكان الدخول في نفس اللحظة ---
+    pullback_pct = (close[i] - entry1) / close[i] * 100
+    risk_pct = risk / entry1 * 100
+    atr_mid = (MIN_ATR_PCT + MAX_ATR_PCT) / 2
+    atr_dist_from_mid = abs(atr_pct[i] - atr_mid) / (MAX_ATR_PCT - MIN_ATR_PCT)
     score = (
-        0.30 * (RSI_THRESHOLD - row["rsi"]) / RSI_THRESHOLD
-        + 0.25 * min(abs(row["cci"]) / 300, 1)
-        + 0.20 * min(abs(row["willr"]) / 100, 1)
-        + 0.15 * (1 - min(row["stoch_k"] / 20, 1))
-        + 0.10 * (1 - min(abs(row["dist_swing_low_pct"]) / 1.0, 1))
+        0.45 * min(pullback_pct / 2.0, 1.0)
+        + 0.35 * (1 - min(risk_pct / 5.0, 1.0))
+        + 0.20 * (1 - min(atr_dist_from_mid, 1.0))
     )
-    return True, score
+
+    return {
+        "entry1": float(entry1),
+        "sl": float(sl),
+        "tp": float(tp),
+        "score": float(score),
+        "signal_time": str(df["open_time_utc"].iloc[i]),
+    }
 
 
-def compute_sl_tp(entry_price, atr_value):
-    sl_price = entry_price - SL_ATR_MULT * atr_value
-    tp_price = entry_price + TP_ATR_MULT * atr_value
-    return sl_price, tp_price
+def apply_entry_slippage(limit_price):
+    """أمر Limit شراء: الانزلاق المتوقع بيخلي التنفيذ الفعلي أعلى شوية من السعر النظري."""
+    return limit_price * (1 + SLIPPAGE_PCT_PER_SIDE / 100)
+
+
+def apply_exit_slippage(exit_price, is_stop_loss):
+    """
+    عند SL: التنفيذ الفعلي غالبًا أسوأ (أقل) من سعر الوقف النظري (انزلاق ضد الصفقة).
+    عند TP: نفترض تنفيذ متحفظ (نفس المنطق - انزلاق ضد الصفقة بشكل طفيف).
+    """
+    if is_stop_loss:
+        return exit_price * (1 - SLIPPAGE_PCT_PER_SIDE / 100)
+    return exit_price * (1 - SLIPPAGE_PCT_PER_SIDE / 100)
+
+
+def compute_net_pnl_pct(entry_price, exit_price):
+    """العائد الصافي % بعد خصم العمولة (لسه العمولة بس، الانزلاق مطبّق مسبقًا على الأسعار)."""
+    gross_pct = (exit_price - entry_price) / entry_price * 100
+    return gross_pct - COMMISSION_PCT_PER_SIDE * 2
