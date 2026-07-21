@@ -1,16 +1,20 @@
 """
-بوت توصيات تداول - استراتيجية BOS + Order Block (يشتغل مرة كل تشغيل، كل 30 دقيقة)
+بوت توصيات تداول - استراتيجية BOS + Order Block
+يشتغل مرة كل تشغيل (مصمم ليُستدعى دوريًا كل 30 دقيقة)
+
+الفرق عن نسخة Mean Reversion: الدخول هون Limit عند قمة Order Block، مش فوري.
+لهيك في حالتين لكل رمز:
+  - pending_setups : إشارة اتكشفت وبتستنى السعر يلمس entry1 (أمر معلّق)
+  - open_positions : الأمر اتنفذ فعلاً وبيستنى SL/TP/Timeout
 
 الوظيفة:
-  1. يفحص أوامر تلجرام الجديدة (/balance /positions /stats /signals /help) ويرد عليها
+  1. يفحص أوامر تلجرام الجديدة (/balance /positions /pending /stats /signals /help)
   2. يجلب آخر بيانات الشموع (30m) من Binance لقائمة الرموز في symbols.txt
-  3. يحسب مؤشرات BOS + Order Block (نفس منطق الباكتست بالضبط - سببي 100%)
-  4. يدير دورة حياة كل إعداد:
-       إشارة BOS جديدة → "إعداد معلّق" (Limit Order) → تعبئة عند لمس السعر → صفقة مفتوحة → خروج SL/TP/وقف زمني
-  5. يطبّق العمولة + الانزلاق السعري (Slippage) على كل تنفيذ فعلي
-  6. عند ازدحام أكتر من إعداد بيتعبّى بنفس اللحظة والأماكن المتاحة أقل، ياخد الأعلى score
-  7. يرسل كل إشارة/تعبئة/خروج كرسالة تلجرام، ويحدّث الرصيد الافتراضي والإحصائيات
-  8. يسجل كل صفقة مغلقة في trades_log.csv
+  3. يفحص الـsetups المعلّقة: تنفيذ أو إلغاء بسبب Timeout
+  4. يتابع الصفقات المفتوحة: يغلقها عند SL/TP/Timeout
+  5. يفحص إشارات BOS+OB جديدة على الرموز الخالية من setup حاليًا
+  6. يرسل كل حدث كرسالة تلجرام، ويحدّث الرصيد الافتراضي والإحصائيات
+  7. يسجل كل صفقة مغلقة في trades_log_bos.csv
 
 ⚠️ هذا أداة توصيات وتتبع فقط — لا ينفذ أي صفقة حقيقية بنفسه، ولا يشكل نصيحة استثمارية.
 """
@@ -21,15 +25,15 @@ from datetime import datetime, timezone, timedelta
 
 import pandas as pd
 
-import strategy
+import strategy_bos as strategy
 from utils import fetch_klines, send_telegram_message, get_telegram_updates, sleep_safe
 
-STATE_FILE = "state.json"
-TRADES_LOG_FILE = "trades_log.csv"
+STATE_FILE = "state_bos.json"
+TRADES_LOG_FILE = "trades_log_bos.csv"
 SYMBOLS_FILE = "symbols.txt"
 INTERVAL = "30m"
 INTERVAL_MINUTES = 30
-STARTING_BALANCE = strategy.STARTING_BALANCE
+STARTING_BALANCE = 10000.0
 MAX_SIGNAL_HISTORY = 20
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
@@ -43,8 +47,8 @@ def load_symbols():
 
 def default_state():
     return {
-        "open_positions": {},      # صفقات اتعبّت فعليًا (limit order اتنفذ)
-        "pending_setups": {},      # إعدادات معلّقة (limit order لسه مستني يتلمس)
+        "pending_setups": {},   # رمز -> {signal_time, entry1, sl, tp, score}
+        "open_positions": {},   # رمز -> {signal_time, entry_time, entry_price, sl, tp, score}
         "last_candle_seen": {},
         "balance": STARTING_BALANCE,
         "stats": {"total_trades": 0, "wins": 0, "losses": 0, "gross_profit": 0.0, "gross_loss": 0.0},
@@ -82,6 +86,11 @@ def fmt_price(p):
     return f"{p:.6f}".rstrip("0").rstrip(".")
 
 
+def tv_link(symbol):
+    """رابط شارت الرمز على TradingView (نفترض الرمز بصيغة Binance، مثلاً BTCUSDT)."""
+    return f"https://www.tradingview.com/symbols/{symbol}/"
+
+
 def push(msg):
     print(msg.replace("\n", " | "))
     if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
@@ -107,72 +116,33 @@ def log_signal(state, kind, symbol, detail):
     state["signal_history"] = state["signal_history"][:MAX_SIGNAL_HISTORY]
 
 
-def close_position(state, sym, pos, exit_price_raw, exit_reason, is_stop_loss, last_open_time):
-    """يغلق صفقة مفتوحة: يطبّق انزلاق الخروج + العمولة، يحدّث الرصيد والإحصائيات، ويسجل ويبلّغ."""
-    exit_price = strategy.apply_exit_slippage(exit_price_raw, is_stop_loss)
-    pnl_pct = strategy.compute_net_pnl_pct(pos["entry_price"], exit_price)
-
-    position_dollars = pos.get("position_dollars", state["balance"] * strategy.POSITION_SIZE_PCT)
-    pnl_dollars = position_dollars * pnl_pct / 100
-    state["balance"] = state.get("balance", STARTING_BALANCE) + pnl_dollars
-
-    s = state["stats"]
-    s["total_trades"] += 1
-    if pnl_dollars > 0:
-        s["wins"] += 1
-        s["gross_profit"] += pnl_dollars
-    else:
-        s["losses"] += 1
-        s["gross_loss"] += abs(pnl_dollars)
-
-    emoji = "✅" if pnl_pct > 0 else "❌"
-    msg = (
-        f"{emoji} <b>إغلاق صفقة: {sym}</b>\n"
-        f"السبب: {exit_reason}\n"
-        f"سعر الدخول (بعد الانزلاق): {fmt_price(pos['entry_price'])}\n"
-        f"سعر الخروج (بعد الانزلاق): {fmt_price(exit_price)}\n"
-        f"النتيجة الصافية (بعد عمولة+انزلاق): {pnl_pct:+.2f}% ({pnl_dollars:+,.2f}$)\n"
-        f"الرصيد الحالي: ${state['balance']:,.2f}"
-    )
-    push(msg)
-    log_signal(state, "خروج", sym, f"{exit_reason} {pnl_pct:+.2f}%")
-    append_trade_log({
-        "pair": sym,
-        "signal_time": pos.get("signal_time", ""),
-        "entry_time": pos["entry_time"],
-        "exit_time": str(last_open_time),
-        "entry_price": round(pos["entry_price"], 8),
-        "exit_price": round(exit_price, 8),
-        "pnl_pct_net": round(pnl_pct, 4),
-        "pnl_dollars": round(pnl_dollars, 2),
-        "exit_reason": exit_reason,
-        "score": pos.get("score", ""),
-        "balance_after": round(state["balance"], 2),
-    })
-
-
 # ============================================================
 # معالجة أوامر تلجرام التفاعلية
 # ============================================================
 def handle_commands(state):
     if not TELEGRAM_TOKEN:
         return
+
     offset = state.get("last_update_id", 0) + 1
     updates = get_telegram_updates(TELEGRAM_TOKEN, offset=offset)
+
     for update in updates:
         state["last_update_id"] = update["update_id"]
         msg = update.get("message")
         if not msg or "text" not in msg:
             continue
+
         chat_id = str(msg["chat"]["id"])
         if TELEGRAM_CHAT_ID and chat_id != str(TELEGRAM_CHAT_ID):
             continue
+
         text = msg["text"].strip().lower()
+
         if text in ("/balance", "/رصيد"):
             handle_balance(state, chat_id)
         elif text in ("/positions", "/الصفقات"):
             handle_positions(state, chat_id)
-        elif text in ("/pending", "/المعلقة"):
+        elif text in ("/pending", "/معلقة"):
             handle_pending(state, chat_id)
         elif text in ("/stats", "/احصائيات", "/إحصائيات"):
             handle_stats(state, chat_id)
@@ -204,7 +174,8 @@ def handle_positions(state, chat_id):
         lines.append(
             f"• <b>{sym}</b>\n"
             f"  دخول: {fmt_price(pos['entry_price'])} | SL: {fmt_price(pos['sl'])} | TP: {fmt_price(pos['tp'])}\n"
-            f"  وقت الدخول: {pos['entry_time']}"
+            f"  وقت التنفيذ: {pos['entry_time']}\n"
+            f"  📈 <a href=\"{tv_link(sym)}\">TradingView</a>"
         )
     reply(chat_id, "\n\n".join(lines))
 
@@ -212,16 +183,18 @@ def handle_positions(state, chat_id):
 def handle_pending(state, chat_id):
     pending = state.get("pending_setups", {})
     if not pending:
-        reply(chat_id, "📭 ما فيه إعدادات معلّقة حاليًا.")
+        reply(chat_id, "📭 ما فيه أوامر معلّقة (Limit) حاليًا.")
         return
-    lines = [f"⏳ <b>إعدادات معلّقة بانتظار التنفيذ ({len(pending)})</b>\n"]
+    lines = [f"⏳ <b>أوامر معلّقة بانتظار التنفيذ ({len(pending)})</b>\n"]
     for sym, p in pending.items():
         lines.append(
             f"• <b>{sym}</b>\n"
-            f"  دخول مستهدف: {fmt_price(p['entry1'])} | SL: {fmt_price(p['sl'])} | TP: {fmt_price(p['tp'])}\n"
-            f"  وقت الإشارة: {p['signal_time']}"
+            f"  Entry (Limit): {fmt_price(p['entry1'])} | SL: {fmt_price(p['sl'])} | TP: {fmt_price(p['tp'])}\n"
+            f"  وقت الإشارة: {p['signal_time']}\n"
+            f"  📈 <a href=\"{tv_link(sym)}\">TradingView</a>"
         )
     reply(chat_id, "\n\n".join(lines))
+
 
 
 def handle_stats(state, chat_id):
@@ -238,9 +211,10 @@ def handle_stats(state, chat_id):
     profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else float("inf")
     balance = state.get("balance", STARTING_BALANCE)
     total_return_pct = (balance - STARTING_BALANCE) / STARTING_BALANCE * 100
+
     pf_str = f"{profit_factor:.2f}" if profit_factor != float("inf") else "∞"
     msg = (
-        f"📊 <b>إحصائيات الأداء الحي</b>\n"
+        f"📊 <b>إحصائيات الأداء الحي — BOS + Order Block</b>\n"
         f"إجمالي الصفقات: {total}\n"
         f"رابحة: {wins} | خاسرة: {losses}\n"
         f"Win Rate: {win_rate:.2f}%\n"
@@ -264,10 +238,10 @@ def handle_signals(state, chat_id):
 
 def handle_help(chat_id):
     msg = (
-        "🤖 <b>أوامر البوت المتاحة</b>\n\n"
+        "🤖 <b>أوامر البوت المتاحة — BOS + Order Block</b>\n\n"
         "/balance — الرصيد الافتراضي الحالي\n"
-        "/positions — الصفقات المفتوحة فعليًا الآن\n"
-        "/pending — الإعدادات المعلّقة (لسه ما اتلمستش)\n"
+        "/positions — الصفقات المفتوحة (اتنفذت فعلاً)\n"
+        "/pending — الأوامر المعلّقة (بانتظار لمس سعر الدخول)\n"
         "/stats — إحصائيات الأداء التراكمية\n"
         "/signals — آخر 10 إشارات دخول/خروج\n"
         "/help — عرض هذه القائمة\n\n"
@@ -280,14 +254,15 @@ def handle_help(chat_id):
 # المنطق الرئيسي
 # ============================================================
 def main():
-    print(f"=== تشغيل البوت — {datetime.now(timezone.utc).isoformat()} ===")
+    print(f"=== تشغيل بوت BOS+OB — {datetime.now(timezone.utc).isoformat()} ===")
     symbols = load_symbols()
     state = load_state()
     print(f"عدد الرموز المراقبة: {len(symbols)}")
 
+    # ---------- 0) معالجة أي أوامر تفاعلية جديدة ----------
     handle_commands(state)
 
-    # ---------- 1) جلب البيانات وحساب المؤشرات ----------
+    # ---------- 1) جلب البيانات وحساب المؤشرات لكل رمز ----------
     data = {}
     for sym in symbols:
         df = fetch_klines(sym, interval=INTERVAL, limit=500)
@@ -302,32 +277,33 @@ def main():
         save_state(state)
         return
 
-    open_positions = state["open_positions"]
     pending_setups = state["pending_setups"]
+    open_positions = state["open_positions"]
 
-    # ---------- 2) فحص الصفقات المفتوحة فعليًا (خروج SL / TP / وقف زمني) ----------
+    # ---------- 2) فحص الصفقات المفتوحة فعليًا (SL / TP / Timeout) ----------
     for sym in list(open_positions.keys()):
         if sym not in data:
             continue
         pos = open_positions[sym]
         last = data[sym].iloc[-1]
-        signal_time = pd.Timestamp(pos.get("signal_time", pos["entry_time"]))
+        signal_time = pd.Timestamp(pos["signal_time"])
         bars_since_signal = int((last["open_time_utc"] - signal_time) / pd.Timedelta(minutes=INTERVAL_MINUTES))
 
-        exit_price_raw, exit_reason, is_sl = None, None, False
+        exit_price, exit_reason = None, None
         if last["low"] <= pos["sl"]:
-            exit_price_raw, exit_reason, is_sl = pos["sl"], "SL 🔴", True
+            exit_price, exit_reason = pos["sl"], "SL 🔴"
         elif last["high"] >= pos["tp"]:
-            exit_price_raw, exit_reason, is_sl = pos["tp"], "TP 🟢", False
+            exit_price, exit_reason = pos["tp"], "TP 🟢"
         elif bars_since_signal > strategy.MAX_BARS_ACTIVE:
-            exit_price_raw, exit_reason, is_sl = last["close"], "وقف زمني ⏱️", False
+            exit_price, exit_reason = last["close"], "Timeout ⏱️"
 
-        if exit_price_raw is not None:
-            close_position(state, sym, pos, exit_price_raw, exit_reason, is_sl, last["open_time_utc"])
+        if exit_price is not None:
+            _close_position(state, sym, pos, exit_price, exit_reason, last["open_time_utc"])
             del open_positions[sym]
 
-    # ---------- 3) فحص الإعدادات المعلّقة (هل اتلمس سعر الدخول؟) ----------
-    newly_filled = []  # [(sym, pos_dict, score)]
+    # ---------- 3) فحص الأوامر المعلّقة (تنفيذ Limit أو إلغاء بسبب Timeout) ----------
+    # نجمع كل اللي بيصير قابل للتنفيذ هالدورة، ونرتبهم حسب السكور لو المحفظة مزدحمة
+    fillable = []
     for sym in list(pending_setups.keys()):
         if sym not in data:
             continue
@@ -337,88 +313,173 @@ def main():
         bars_since_signal = int((last["open_time_utc"] - signal_time) / pd.Timedelta(minutes=INTERVAL_MINUTES))
 
         if last["low"] <= p["entry1"]:
-            entry_price = strategy.apply_entry_slippage(p["entry1"])
-            pos = {
-                "entry_time": str(last["open_time_utc"]),
-                "signal_time": p["signal_time"],
-                "entry_price": entry_price,
-                "sl": p["sl"],
-                "tp": p["tp"],
-                "score": p["score"],
-            }
-            # فحص خروج فوري لو نفس شمعة التعبئة لمست SL أو TP كمان
-            if last["low"] <= p["sl"]:
-                close_position(state, sym, pos, p["sl"], "SL 🔴 (بنفس شمعة التعبئة)", True, last["open_time_utc"])
-                del pending_setups[sym]
-                continue
-            elif last["high"] >= p["tp"]:
-                close_position(state, sym, pos, p["tp"], "TP 🟢 (بنفس شمعة التعبئة)", False, last["open_time_utc"])
-                del pending_setups[sym]
-                continue
-            newly_filled.append((sym, pos, p["score"]))
-            del pending_setups[sym]
+            fillable.append((sym, p, last))
         elif bars_since_signal > strategy.MAX_BARS_ACTIVE:
-            print(f"  [إلغاء] {sym}: انتهت مهلة الإعداد المعلّق بدون تنفيذ.")
             del pending_setups[sym]
+            log_signal(state, "إلغاء", sym, "انتهى وقت الأمر المعلّق بدون تنفيذ")
 
-    # تطبيق الأماكن المتاحة على الإعدادات اللي اتعبّت هالتشغيلة، بترتيب السكور عند الازدحام
-    newly_filled.sort(key=lambda x: x[2], reverse=True)
-    available_slots = strategy.MAX_CONCURRENT_TRADES - len(open_positions)
-    for sym, pos, score in newly_filled:
+    fillable.sort(key=lambda x: x[1]["score"], reverse=True)
+    for sym, p, last in fillable:
+        del pending_setups[sym]
+        available_slots = strategy.MAX_CONCURRENT_TRADES - len(open_positions)
         if available_slots <= 0:
-            print(f"  [رفض ازدحام] {sym}: الأماكن ممتلئة، السكور {score:.3f} لم يكفِ.")
+            log_signal(state, "إلغاء", sym, "اترفض التنفيذ - المحفظة ممتلئة (3 صفقات)")
             continue
-        position_dollars = state.get("balance", STARTING_BALANCE) * strategy.POSITION_SIZE_PCT
-        pos["position_dollars"] = round(position_dollars, 2)
-        open_positions[sym] = pos
-        available_slots -= 1
-        msg = (
-            f"✅ <b>تعبئة صفقة: {sym}</b>\n"
-            f"سعر الدخول (بعد الانزلاق): {fmt_price(pos['entry_price'])}\n"
-            f"وقف الخسارة (SL): {fmt_price(pos['sl'])}\n"
-            f"جني الأرباح (TP): {fmt_price(pos['tp'])}\n"
-            f"حجم الصفقة: {strategy.POSITION_SIZE_PCT*100:.1f}% (${position_dollars:,.2f})\n"
-            f"قوة الإشارة: {score:.3f}"
-        )
-        push(msg)
-        log_signal(state, "دخول", sym, f"تعبئة عند {fmt_price(pos['entry_price'])}")
 
-    # ---------- 4) فحص إشارات BOS + Order Block جديدة ----------
-    new_candidates = []
+        entry_price = p["entry1"]
+        # نفس منطق الباكتست: نتحقق فورًا هل نفس الشمعة يلي نفّذت فيها لمست SL أو TP كمان
+        exit_price, exit_reason = None, None
+        if last["low"] <= p["sl"]:
+            exit_price, exit_reason = p["sl"], "SL 🔴"
+        elif last["high"] >= p["tp"]:
+            exit_price, exit_reason = p["tp"], "TP 🟢"
+
+        if exit_price is not None:
+            # تنفيذ وإغلاق بنفس الشمعة
+            _close_position(state, sym, {
+                "signal_time": p["signal_time"], "entry_time": str(last["open_time_utc"]),
+                "entry_price": entry_price, "sl": p["sl"], "tp": p["tp"], "score": p["score"],
+            }, exit_price, exit_reason, last["open_time_utc"])
+        else:
+            open_positions[sym] = {
+                "signal_time": p["signal_time"],
+                "entry_time": str(last["open_time_utc"]),
+                "entry_price": entry_price,
+                "sl": p["sl"], "tp": p["tp"], "score": p["score"],
+            }
+            time_str = pd.Timestamp(last["open_time_utc"]).strftime("%d %b %Y • %H:%M")
+            push(
+                f"📥 <b>تم تنفيذ الأمر</b>\n"
+                f"🪙 <b>{sym}</b>\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"💰 سعر التنفيذ: <b>{fmt_price(entry_price)}</b>\n"
+                f"🛑 وقف الخسارة: <b>{fmt_price(p['sl'])}</b>\n"
+                f"🎯 جني الأرباح: <b>{fmt_price(p['tp'])}</b>\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"📈 <a href=\"{tv_link(sym)}\">فتح الشارت على TradingView</a>\n"
+                f"🕒 {time_str} UTC"
+            )
+            log_signal(state, "تنفيذ", sym, f"دخول عند {fmt_price(entry_price)}")
+
+    # ---------- 4) فحص إشارات BOS+OB جديدة (بس على رموز خالية من setup حاليًا) ----------
     for sym, df in data.items():
         if sym in open_positions or sym in pending_setups:
             continue
-        last = df.iloc[-1]
-        candle_key = str(last["open_time_utc"])
-        if state["last_candle_seen"].get(sym) == candle_key:
+        last_seen = state["last_candle_seen"].get(sym)
+        candle_key = str(df.iloc[-1]["open_time_utc"])
+        if last_seen == candle_key:
             continue
+
         sig = strategy.check_new_signal(df)
         if sig:
-            new_candidates.append((sym, sig))
-
-    for sym, sig in new_candidates:
-        pending_setups[sym] = sig
-        msg = (
-            f"🚨 <b>إعداد جديد (BOS + Order Block): {sym}</b>\n"
-            f"سعر الدخول المستهدف (Limit): {fmt_price(sig['entry1'])}\n"
-            f"وقف الخسارة (SL): {fmt_price(sig['sl'])}\n"
-            f"جني الأرباح (TP): {fmt_price(sig['tp'])}\n"
-            f"قوة الإشارة: {sig['score']:.3f}\n"
-            f"مهلة التنفيذ: {strategy.MAX_BARS_ACTIVE} شمعة (~{strategy.MAX_BARS_ACTIVE * INTERVAL_MINUTES // 60} ساعة)\n"
-            f"⚠️ إعداد معلّق فقط، لسه ما دخلناش الصفقة. توصية آلية، مش نصيحة مالية."
-        )
-        push(msg)
-        log_signal(state, "إعداد", sym, f"معلّق عند {fmt_price(sig['entry1'])}")
+            pending_setups[sym] = {
+                "signal_time": str(sig["signal_time"]),
+                "entry1": sig["entry1"], "sl": sig["sl"], "tp": sig["tp"],
+                "score": sig["score"],
+            }
+            time_str = pd.Timestamp(sig["signal_time"]).strftime("%d %b %Y • %H:%M")
+            push(
+                f"🚨 <b>إشارة دخول جديدة</b>\n"
+                f"🪙 <b>{sym}</b>\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"💰 سعر الدخول (Limit): <b>{fmt_price(sig['entry1'])}</b>\n"
+                f"🛑 وقف الخسارة: <b>{fmt_price(sig['sl'])}</b>\n"
+                f"🎯 جني الأرباح: <b>{fmt_price(sig['tp'])}</b>\n"
+                f"📦 حجم الصفقة: <b>{strategy.POSITION_SIZE_PCT*100:.0f}% من رأس المال</b>\n"
+                f"📊 قوة الإشارة: <b>{sig['score']*100:.0f}%</b>\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"📈 <a href=\"{tv_link(sym)}\">فتح الشارت على TradingView</a>\n"
+                f"🕒 {time_str} UTC\n"
+                f"⏳ بانتظار لمس سعر الدخول (حد أقصى {strategy.MAX_BARS_ACTIVE} شمعة)\n"
+                f"⚠️ توصية آلية من نظام باكتست، وليست نصيحة مالية."
+            )
+            log_signal(state, "إشارة", sym, f"Setup معلّق عند {fmt_price(sig['entry1'])}")
 
     for sym, df in data.items():
         state["last_candle_seen"][sym] = str(df.iloc[-1]["open_time_utc"])
 
     save_state(state)
-    print(
-        f"الصفقات المفتوحة: {len(open_positions)} | المعلّقة: {len(pending_setups)} | "
-        f"الرصيد: ${state['balance']:,.2f}"
-    )
+    print(f"مفتوحة: {len(open_positions)} | معلّقة: {len(pending_setups)} | الرصيد: ${state['balance']:,.2f}")
     print("=== انتهى التشغيل ===")
+
+
+def _close_position(state, sym, pos, exit_price, exit_reason, exit_time):
+    """يغلق صفقة (سواء فُتحت هالدورة أو دورة سابقة) ويحدّث الرصيد والإحصائيات والسجل."""
+    round_trip_cost = strategy.ROUND_TRIP_COST_PCT
+    pnl_pct = (exit_price - pos["entry_price"]) / pos["entry_price"] * 100 - round_trip_cost
+
+    position_dollars = state["balance"] * strategy.POSITION_SIZE_PCT
+    pnl_dollars = position_dollars * pnl_pct / 100
+    state["balance"] = state.get("balance", STARTING_BALANCE) + pnl_dollars
+
+    s = state["stats"]
+    s["total_trades"] += 1
+    if pnl_dollars > 0:
+        s["wins"] += 1
+        s["gross_profit"] += pnl_dollars
+    else:
+        s["losses"] += 1
+        s["gross_loss"] += abs(pnl_dollars)
+
+    # مدة الصفقة بالشموع (من لحظة التنفيذ الفعلي لحظة الخروج)
+    entry_time_raw = pos.get("entry_time", pos.get("signal_time"))
+    bars_held = int((pd.Timestamp(exit_time) - pd.Timestamp(entry_time_raw)) / pd.Timedelta(minutes=INTERVAL_MINUTES))
+    bars_held = max(bars_held, 0)
+
+    is_tp = exit_reason.startswith("TP")
+    is_sl = exit_reason.startswith("SL")
+    is_win = pnl_pct > 0
+
+    sep = "━━━━━━━━━━━━━━━━━━"
+    tv = tv_link(sym)
+    body = (
+        f"🪙 <b>{sym}</b>\n{sep}\n"
+        f"📥 الدخول : {fmt_price(pos['entry_price'])}\n"
+        f"📤 الخروج : {fmt_price(exit_price)}\n"
+    )
+
+    if is_tp:
+        header = "🟢🟢🟢🟢🟢🟢🟢\n🏆 <b>تم تحقيق الهدف</b>\n"
+        reason_line = "🎯 السبب: جني الأرباح\n"
+        result_lines = f"📈 العائد : <b>{pnl_pct:+.2f}%</b>\n💵 الربح : <b>{pnl_dollars:+,.2f}$</b>\n"
+        footer = f"💚 تمت الصفقة بنجاح."
+    elif is_sl:
+        header = "🔴🔴🔴🔴🔴\n🛑 <b>تم تفعيل وقف الخسارة</b>\n"
+        reason_line = ""
+        result_lines = f"📉 العائد : <b>{pnl_pct:+.2f}%</b>\n💸 الخسارة : <b>{pnl_dollars:+,.2f}$</b>\n"
+        footer = ""
+    elif is_win:  # Timeout بربح
+        header = "🟢🟢🟢✨🟢🟢\n💚 <b>إغلاق رابح</b>\n"
+        reason_line = "⏱️ السبب: انتهاء مدة الصفقة\n"
+        result_lines = f"📈 العائد : <b>{pnl_pct:+.2f}%</b>\n💵 الربح : <b>{pnl_dollars:+,.2f}$</b>\n"
+        footer = "✨ تم الاحتفاظ بالأرباح حتى نهاية مدة الصفقة."
+    else:  # Timeout بخسارة
+        header = "🟠\n⏱️ <b>انتهاء مدة الصفقة</b>\n"
+        reason_line = ""
+        result_lines = f"📉 العائد : <b>{pnl_pct:+.2f}%</b>\n💸 الخسارة : <b>{pnl_dollars:+,.2f}$</b>\n"
+        footer = ""
+
+    msg = (
+        f"{header}{body}{reason_line}{result_lines}"
+        f"⏳ مدة الصفقة : {bars_held} شمعة\n{sep}\n"
+        f"📈 <a href=\"{tv}\">فتح الشارت على TradingView</a>\n"
+        f"💼 الرصيد الحالي <b>${state['balance']:,.2f}</b>"
+        + (f"\n{footer}" if footer else "")
+    )
+    push(msg)
+    log_signal(state, "خروج", sym, f"{exit_reason} {pnl_pct:+.2f}%")
+    append_trade_log({
+        "pair": sym,
+        "signal_time": pos["signal_time"],
+        "entry_price": pos["entry_price"],
+        "exit_time": str(exit_time),
+        "exit_price": exit_price,
+        "pnl_pct_net": round(pnl_pct, 4),
+        "pnl_dollars": round(pnl_dollars, 2),
+        "exit_reason": exit_reason,
+        "score": pos.get("score", ""),
+        "balance_after": round(state["balance"], 2),
+    })
 
 
 if __name__ == "__main__":
