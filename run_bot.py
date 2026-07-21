@@ -25,7 +25,7 @@ from datetime import datetime, timezone, timedelta
 
 import pandas as pd
 
-import strategy_bos as strategy
+import strategy as strategy
 from utils import fetch_klines, send_telegram_message, get_telegram_updates, sleep_safe
 
 STATE_FILE = "state_bos.json"
