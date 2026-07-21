@@ -54,6 +54,7 @@ def default_state():
         "stats": {"total_trades": 0, "wins": 0, "losses": 0, "gross_profit": 0.0, "gross_loss": 0.0},
         "last_update_id": 0,
         "signal_history": [],
+        "symbol_cooldown_until": {},   # رمز -> ISO timestamp (ممنوع دخول جديد قبله)
     }
 
 
@@ -116,6 +117,40 @@ def log_signal(state, kind, symbol, detail):
     state["signal_history"] = state["signal_history"][:MAX_SIGNAL_HISTORY]
 
 
+def update_monthly_guard(state, now):
+    """يحدّث حالة (وقف الشهر) بناءً على الرصيد الحالي مقارنة برصيد بداية الشهر."""
+    month_key = now.strftime("%Y-%m")
+    if state.get("month_key") != month_key:
+        state["month_key"] = month_key
+        state["month_start_balance"] = state.get("balance", STARTING_BALANCE)
+        state["month_stopped"] = False
+
+    start = state.get("month_start_balance", STARTING_BALANCE)
+    balance = state.get("balance", STARTING_BALANCE)
+    monthly_return_pct = (balance / start - 1) * 100 if start else 0
+
+    if not state.get("month_stopped") and monthly_return_pct <= strategy.MONTHLY_STOP_PCT:
+        state["month_stopped"] = True
+        push(
+            f"🛑 <b>وقف شهري مفعّل</b>\n"
+            f"الخسارة الشهرية وصلت {monthly_return_pct:.2f}% (الحد {strategy.MONTHLY_STOP_PCT}%)\n"
+            f"لن تُفتح صفقات جديدة لحد نهاية الشهر — الصفقات المفتوحة حاليًا هتكمل عادي."
+        )
+    return state.get("month_stopped", False)
+
+
+def is_symbol_in_cooldown(state, sym, now):
+    until_str = state.get("symbol_cooldown_until", {}).get(sym)
+    if not until_str:
+        return False
+    return now < pd.Timestamp(until_str)
+
+
+def set_symbol_cooldown(state, sym, exit_time):
+    until = pd.Timestamp(exit_time) + timedelta(hours=strategy.SYMBOL_COOLDOWN_HOURS)
+    state.setdefault("symbol_cooldown_until", {})[sym] = str(until)
+
+
 # ============================================================
 # معالجة أوامر تلجرام التفاعلية
 # ============================================================
@@ -155,11 +190,16 @@ def handle_commands(state):
 def handle_balance(state, chat_id):
     balance = state.get("balance", STARTING_BALANCE)
     total_return_pct = (balance - STARTING_BALANCE) / STARTING_BALANCE * 100
+    month_start = state.get("month_start_balance", STARTING_BALANCE)
+    month_return_pct = (balance / month_start - 1) * 100 if month_start else 0
+    status_line = "🛑 موقوف (تعدى حد الخسارة الشهري)" if state.get("month_stopped") else "✅ شغال عادي"
     msg = (
         f"💰 <b>الرصيد الافتراضي الحالي</b>\n"
         f"الرصيد: ${balance:,.2f}\n"
         f"رأس المال الابتدائي: ${STARTING_BALANCE:,.2f}\n"
-        f"العائد التراكمي: {total_return_pct:+.2f}%"
+        f"العائد التراكمي: {total_return_pct:+.2f}%\n"
+        f"عائد الشهر الحالي: {month_return_pct:+.2f}%\n"
+        f"حالة الدخول الجديد: {status_line}"
     )
     reply(chat_id, msg)
 
@@ -280,6 +320,9 @@ def main():
     pending_setups = state["pending_setups"]
     open_positions = state["open_positions"]
 
+    now = datetime.now(timezone.utc)
+    month_stopped = update_monthly_guard(state, now)
+
     # ---------- 2) فحص الصفقات المفتوحة فعليًا (SL / TP / Timeout) ----------
     for sym in list(open_positions.keys()):
         if sym not in data:
@@ -299,6 +342,8 @@ def main():
 
         if exit_price is not None:
             _close_position(state, sym, pos, exit_price, exit_reason, last["open_time_utc"])
+            if exit_reason.startswith("SL"):
+                set_symbol_cooldown(state, sym, last["open_time_utc"])
             del open_positions[sym]
 
     # ---------- 3) فحص الأوامر المعلّقة (تنفيذ Limit أو إلغاء بسبب Timeout) ----------
@@ -321,12 +366,19 @@ def main():
     fillable.sort(key=lambda x: x[1]["score"], reverse=True)
     for sym, p, last in fillable:
         del pending_setups[sym]
+
+        if month_stopped:
+            log_signal(state, "إلغاء", sym, "اترفض التنفيذ - الوقف الشهري مفعّل")
+            continue
+
         available_slots = strategy.MAX_CONCURRENT_TRADES - len(open_positions)
         if available_slots <= 0:
             log_signal(state, "إلغاء", sym, "اترفض التنفيذ - المحفظة ممتلئة (3 صفقات)")
             continue
 
         entry_price = p["entry1"]
+        # حجم الصفقة يتحدد وقت التنفيذ (الفتح) ويتثبّت لحد الإغلاق، بسقف أقصى بالدولار
+        position_dollars = min(state["balance"] * strategy.POSITION_SIZE_PCT, strategy.MAX_POSITION_SIZE_USD)
         # نفس منطق الباكتست: نتحقق فورًا هل نفس الشمعة يلي نفّذت فيها لمست SL أو TP كمان
         exit_price, exit_reason = None, None
         if last["low"] <= p["sl"]:
@@ -339,13 +391,17 @@ def main():
             _close_position(state, sym, {
                 "signal_time": p["signal_time"], "entry_time": str(last["open_time_utc"]),
                 "entry_price": entry_price, "sl": p["sl"], "tp": p["tp"], "score": p["score"],
+                "position_dollars": position_dollars,
             }, exit_price, exit_reason, last["open_time_utc"])
+            if exit_reason.startswith("SL"):
+                set_symbol_cooldown(state, sym, last["open_time_utc"])
         else:
             open_positions[sym] = {
                 "signal_time": p["signal_time"],
                 "entry_time": str(last["open_time_utc"]),
                 "entry_price": entry_price,
                 "sl": p["sl"], "tp": p["tp"], "score": p["score"],
+                "position_dollars": position_dollars,
             }
             time_str = pd.Timestamp(last["open_time_utc"]).strftime("%d %b %Y • %H:%M")
             push(
@@ -368,6 +424,11 @@ def main():
         last_seen = state["last_candle_seen"].get(sym)
         candle_key = str(df.iloc[-1]["open_time_utc"])
         if last_seen == candle_key:
+            continue
+
+        if month_stopped:
+            continue
+        if is_symbol_in_cooldown(state, sym, now):
             continue
 
         sig = strategy.check_new_signal(df)
@@ -408,7 +469,11 @@ def _close_position(state, sym, pos, exit_price, exit_reason, exit_time):
     round_trip_cost = strategy.ROUND_TRIP_COST_PCT
     pnl_pct = (exit_price - pos["entry_price"]) / pos["entry_price"] * 100 - round_trip_cost
 
-    position_dollars = state["balance"] * strategy.POSITION_SIZE_PCT
+    # حجم الصفقة المحفوظ وقت الفتح (مش الرصيد الحالي وقت الإغلاق - كان هذا باگ)
+    position_dollars = pos.get("position_dollars")
+    if position_dollars is None:
+        # احتياط لصفقات قديمة محفوظة في state_bos.json قبل هذا التصحيح
+        position_dollars = min(state["balance"] * strategy.POSITION_SIZE_PCT, strategy.MAX_POSITION_SIZE_USD)
     pnl_dollars = position_dollars * pnl_pct / 100
     state["balance"] = state.get("balance", STARTING_BALANCE) + pnl_dollars
 
@@ -476,6 +541,7 @@ def _close_position(state, sym, pos, exit_price, exit_reason, exit_time):
         "exit_price": exit_price,
         "pnl_pct_net": round(pnl_pct, 4),
         "pnl_dollars": round(pnl_dollars, 2),
+        "position_dollars": round(position_dollars, 2),
         "exit_reason": exit_reason,
         "score": pos.get("score", ""),
         "balance_after": round(state["balance"], 2),
