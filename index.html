@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ScalpingTalalBot — لوحة المراقبة</title>
+<title>Scalping Talal Bot — لوحة المراقبة</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -204,6 +204,18 @@
     background: var(--text);
     border-radius: 1px;
   }
+  .pos-bar-marker.current{
+    background: #ffffff;
+    box-shadow: 0 0 6px rgba(255,255,255,0.7);
+    width:3px; height:18px; top:-6px;
+  }
+  .pos-strategy{
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-dim);
+    margin-bottom: 6px;
+    direction: ltr; text-align: right;
+  }
   .pos-range-labels{
     display:flex; justify-content:space-between;
     font-family: var(--mono);
@@ -305,7 +317,7 @@
 
 <header>
   <div class="brand">
-    <div class="brand-title">SCALPINGTALALBOT</div>
+    <div class="brand-title">Scalping Talal Bot</div>
     <div class="brand-sub">BOS + Order Block · Binance Spot</div>
   </div>
   <div class="live-pill"><span class="live-dot"></span>LIVE</div>
@@ -329,6 +341,20 @@ const TRADES_URL = REPO_RAW + "/trades_log.csv?_=" + Date.now();
 const app = document.getElementById('app');
 
 function esc(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+async function fetchBinancePrices(symbols){
+  const prices = {};
+  await Promise.all(symbols.map(async (sym) => {
+    try{
+      const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${encodeURIComponent(sym)}`);
+      if(!res.ok) return;
+      const data = await res.json();
+      const p = parseFloat(data.price);
+      if(!isNaN(p)) prices[sym] = p;
+    }catch(e){ /* ignore individual symbol failures */ }
+  }));
+  return prices;
+}
 
 function fmtTime(iso){
   if(!iso) return '--';
@@ -398,13 +424,20 @@ async function load(){
     const tradesText = tradesRes.status === 'fulfilled' ? tradesRes.value : '';
     const trades = tradesText ? parseCSV(tradesText) : [];
 
-    render(state, trades);
+    let livePrices = {};
+    if(state && state.open_positions){
+      const openSyms = Object.keys(state.open_positions);
+      if(openSyms.length) livePrices = await fetchBinancePrices(openSyms);
+    }
+
+    render(state, trades, livePrices);
   }catch(err){
     app.innerHTML = `<div class="error-box">تعذّر تحميل البيانات.<br>${esc(err.message||'')}</div>`;
   }
 }
 
-function render(state, trades){
+function render(state, trades, livePrices){
+  livePrices = livePrices || {};
   const openPositions = state && state.open_positions ? state.open_positions : {};
   const openSymbols = Object.keys(openPositions);
 
@@ -442,6 +475,18 @@ function render(state, trades){
         : ((sl - entry) / range) * 100;
       const clamped = Math.max(4, Math.min(96, entryPct));
       const scorePct = p.score ? (parseFloat(p.score)*100).toFixed(0) : null;
+      const strategy = p.strategy || p.strategy_name || null;
+
+      // current price marker — fetched live from Binance
+      const currentPrice = livePrices[sym];
+      let currentMarkerHtml = '';
+      if(currentPrice != null && !isNaN(currentPrice)){
+        const curPct = isLong
+          ? ((currentPrice - sl) / range) * 100
+          : ((sl - currentPrice) / range) * 100;
+        const curClamped = Math.max(2, Math.min(98, curPct));
+        currentMarkerHtml = `<div class="pos-bar-marker current" style="left:${curClamped}%;" title="السعر الحالي ${fmtNum(currentPrice,4)}"></div>`;
+      }
 
       return `
       <div class="pos-card">
@@ -449,13 +494,15 @@ function render(state, trades){
           <span class="pos-symbol">${esc(sym)}</span>
           <span class="pos-badge">${isLong ? 'شراء' : 'بيع'}${scorePct ? ' · Score ' + scorePct + '%' : ''}</span>
         </div>
+        ${strategy ? `<div class="pos-strategy">${esc(strategy)}</div>` : ''}
         <div class="pos-bar-wrap">
           <div class="pos-bar-fill" style="width:100%; opacity:0.9;"></div>
           <div class="pos-bar-marker" style="left:${clamped}%;"></div>
+          ${currentMarkerHtml}
         </div>
         <div class="pos-range-labels">
           <span style="color:var(--red)">SL ${fmtNum(sl,4)}</span>
-          <span>دخول ${fmtNum(entry,4)}</span>
+          <span>دخول ${fmtNum(entry,4)}${currentPrice != null && !isNaN(currentPrice) ? ' · حالي ' + fmtNum(currentPrice,4) : ''}</span>
           <span style="color:var(--green)">TP ${fmtNum(tp,4)}</span>
         </div>
         <div class="pos-grid">
