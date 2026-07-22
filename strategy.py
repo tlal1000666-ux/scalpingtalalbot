@@ -21,18 +21,21 @@ import pandas as pd
 PIVOT_LEN = 5
 OB_LOOKBACK = 20
 ATR_LEN = 14
-MIN_ATR_PCT = 1.5
+MIN_ATR_PCT = 0.5
 MAX_ATR_PCT = 5.0
-MIN_PULLBACK_PCT = 0.10
+MIN_PULLBACK_PCT = 0.30       # أقل نسبة تراجع مطلوبة قبل الدخول (كانت 0.10 - ضعيفة جدًا كفلتر)
 MAX_BARS_ACTIVE = 24          # أقصى عمر للـ setup كامل (من لحظة الإشارة، معلّق أو مفتوح)
 
 # --- SL/TP مبنيين على ATR (بدل مدى الـ Order Block + RR ثابت) ---
 ATR_MULT_SL = 1.0             # SL = entry1 - ATR_MULT_SL × ATR
 ATR_MULT_TP = 1.0             # TP = entry1 + ATR_MULT_TP × ATR
+MIN_TARGET_PCT = 1.5          # أقل مسافة هدف مسموحة (%) - فوق منطق ATR
+MIN_STOP_PCT = 1.0            # أقل مسافة ستوب مسموحة (%) - فوق منطق ATR
 
 COMMISSION_PCT_PER_SIDE = 0.10
-SLIPPAGE_PCT_PER_SIDE = 0.05
+SLIPPAGE_PCT_PER_SIDE = 0.05   # سليباج 0.05% لكل جهة (دخول وخروج)
 ROUND_TRIP_COST_PCT = (COMMISSION_PCT_PER_SIDE + SLIPPAGE_PCT_PER_SIDE) * 2  # 0.30%
+NET_TARGET_MIN_PCT = 1.0       # أقل هدف صافي مقبول (%) بعد خصم كل التكاليف
 
 # --- إدارة المحفظة (لغرض التوصية فقط) ---
 POSITION_SIZE_PCT = 1 / 3     # نسبة من الرصيد الحالي - بدون سقف دولار، بتكبر مع الرصيد
@@ -76,28 +79,10 @@ def compute_all_indicators(g: pd.DataFrame) -> pd.DataFrame:
     return g
 
 
-def check_new_signal(g: pd.DataFrame):
-    """
-    يفحص آخر شمعة مغلقة (الصف الأخير بـ g) بحثًا عن إشارة BOS + Order Block جديدة.
-    يرجع dict فيه (entry1, sl, tp, score, signal_time) لو في إشارة، وإلا None.
-
-    ملاحظة: هاد بس "كشف" الإشارة (نفس لحظة signal_bar بالباكتست) - التنفيذ الفعلي
-    (fill) بيصير لاحقًا لما low شمعة جاية تلمس entry1، وده بتتكفل فيه run_bot_bos.py.
-    """
-    n = len(g)
-    min_bars = max(ATR_LEN, PIVOT_LEN * 2 + 5)
-    if n < min_bars + 1:
-        return None
-
-    i = n - 1  # آخر شمعة مغلقة
-    high = g["high"].values
-    low = g["low"].values
-    close = g["close"].values
-    open_ = g["open"].values
-    atr = g["atr"].values
-    atr_pct = g["atr_pct"].values
-    last_swing_high = g["last_swing_high"].values
-
+def _evaluate_signal_at(i, high, low, close, open_, atr, atr_pct, last_swing_high):
+    """نواة الفحص المشتركة: تفحص شمعة i بحثًا عن إشارة BOS+OB.
+    يستخدمها check_new_signal (للبوت الحي، i=آخر شمعة) ومحرك الباكتست (لكل i بالتاريخ)
+    بنفس المنطق بالضبط - منعًا لتكرار المنطق وحصول فروقات بين الحي والباكتست."""
     if np.isnan(last_swing_high[i]) or np.isnan(atr[i]):
         return None
 
@@ -127,12 +112,29 @@ def check_new_signal(g: pd.DataFrame):
     if not pullback_ok:
         return None
 
+    # فحص إضافي: ATR% محسوب فعليًا من entry1 (نفس الأساس اللي SL/TP مبنيين عليه)
+    # لازم يضل ضمن نفس نطاق الفلتر، لأنه ATR% من close[i] ممكن يختلف كثير عن ATR% من entry1
+    atr_pct_at_entry = atr[i] / entry1 * 100
+    if not (MIN_ATR_PCT <= atr_pct_at_entry <= MAX_ATR_PCT):
+        return None
+
     # ------ SL/TP مبنيين على ATR بدل مدى الـ Order Block ------
-    sl = entry1 - atr[i] * ATR_MULT_SL
-    tp = entry1 + atr[i] * ATR_MULT_TP
+    sl_dist = atr[i] * ATR_MULT_SL
+    tp_dist = atr[i] * ATR_MULT_TP
+    # فرض حد أدنى لمسافة الهدف/الستوب (%) فوق اللي محسوب من ATR
+    sl_dist = max(sl_dist, entry1 * MIN_STOP_PCT / 100)
+    tp_dist = max(tp_dist, entry1 * MIN_TARGET_PCT / 100)
+    sl = entry1 - sl_dist
+    tp = entry1 + tp_dist
     # -----------------------------------------------------------
     risk = entry1 - sl
     if risk <= 0:
+        return None
+
+    # فلتر الهدف الصافي: TP% بعد خصم تكلفة الدخول+الخروج (عمولة+سليباج) لازم يضل ≥1%
+    tp_pct_gross = tp_dist / entry1 * 100
+    net_target_pct = tp_pct_gross - ROUND_TRIP_COST_PCT
+    if net_target_pct < NET_TARGET_MIN_PCT:
         return None
 
     pullback_pct = (close[i] - entry1) / close[i] * 100
@@ -144,11 +146,44 @@ def check_new_signal(g: pd.DataFrame):
         + 0.35 * (1 - min(risk_pct / 5.0, 1.0))
         + 0.20 * (1 - min(atr_dist_from_mid, 1.0))
     )
+    return {"entry1": float(entry1), "sl": float(sl), "tp": float(tp), "score": float(score)}
+
+
+def check_new_signal(g: pd.DataFrame):
+    """
+    يفحص آخر شمعة مغلقة (الصف الأخير بـ g) بحثًا عن إشارة BOS + Order Block جديدة.
+    يرجع dict فيه (entry1, sl, tp, score, signal_time) لو في إشارة، وإلا None.
+
+    ملاحظة: هاد بس "كشف" الإشارة (نفس لحظة signal_bar بالباكتست) - التنفيذ الفعلي
+    (fill) بيصير لاحقًا لما low شمعة جاية تلمس entry1، وده بتتكفل فيه run_bot_bos.py.
+    """
+    n = len(g)
+    min_bars = max(ATR_LEN, PIVOT_LEN * 2 + 5)
+    if n < min_bars + 1:
+        return None
+
+    i = n - 1  # آخر شمعة مغلقة
+    high = g["high"].values
+    low = g["low"].values
+    close = g["close"].values
+    open_ = g["open"].values
+    atr = g["atr"].values
+    atr_pct = g["atr_pct"].values
+    last_swing_high = g["last_swing_high"].values
+
+    result = _evaluate_signal_at(i, high, low, close, open_, atr, atr_pct, last_swing_high)
+    if result is None:
+        return None
 
     return {
         "signal_time": g["open_time_utc"].iloc[i],
-        "entry1": float(entry1),
-        "sl": float(sl),
-        "tp": float(tp),
-        "score": float(score),
+        "entry1": result["entry1"],
+        "sl": result["sl"],
+        "tp": result["tp"],
+        "score": result["score"],
     }
+
+# ==== إضافة الثوابت الناقصة (مذكورة بـ run_bot-1.py بس غير معرّفة بالملف الأصلي) ====
+# بدون سقف دولاري وبدون وقف شهري (بطلب المستخدم) - حجم الصفقة % بحت من الرصيد المتزايد
+MAX_POSITION_SIZE_USD = float("inf")
+MONTHLY_STOP_PCT = float("-inf")
