@@ -543,6 +543,24 @@ function render(state, trades, livePrices){
   const lastBalance = closed.length ? closed[0].balance : null;
   const roiPct = (totalPnl / INITIAL_CAPITAL) * 100;
 
+  // ---- floating (unrealized) PnL for open positions, using live Binance prices ----
+  let floatingPnl = 0;
+  let floatingPnlKnown = false;
+  openSymbols.forEach(sym => {
+    const p = openPositions[sym];
+    const entry = parseFloat(p.entry_price);
+    const sl = parseFloat(p.sl);
+    const tp = parseFloat(p.tp);
+    const isLong = tp > entry;
+    const cur = livePrices[sym];
+    const posDollars = parseFloat(p.position_dollars);
+    if(cur != null && !isNaN(cur) && !isNaN(entry) && entry !== 0 && !isNaN(posDollars)){
+      const changePct = isLong ? (cur - entry) / entry : (entry - cur) / entry;
+      floatingPnl += changePct * posDollars;
+      floatingPnlKnown = true;
+    }
+  });
+
   // ---- heartbeat strip: last ~40 trades (oldest->newest) + open as pulsing ----
   const hbTrades = closed.slice(0, 40).reverse();
   let hbHtml = hbTrades.map(t => `<div class="hb-dot ${t.pnl_dollars > 0 ? 'tp' : 'sl'}" title="${esc(t.symbol)}"></div>`).join('');
@@ -722,6 +740,11 @@ function render(state, trades, livePrices){
         <div class="stat-label">نسبة التغير على رأس المال</div>
         <div class="stat-value ${roiPct>=0?'pos':'neg'}">${roiPct>=0?'+':''}${fmtNum(roiPct,2)}%</div>
         <div class="stat-sub">رأس المال: ${INITIAL_CAPITAL.toLocaleString('en-US')}$</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">الربح العائم</div>
+        <div class="stat-value ${floatingPnlKnown ? (floatingPnl>=0?'pos':'neg') : ''}">${floatingPnlKnown ? (floatingPnl>=0?'+':'')+fmtNum(floatingPnl,2)+'$' : '--'}</div>
+        <div class="stat-sub">${openSymbols.length} صفقة مفتوحة</div>
       </div>
     </div>
 
