@@ -245,6 +245,66 @@
     font-size: 12.5px;
   }
 
+  /* ---------- Equity curve ---------- */
+  .equity-card{
+    background: var(--bg-panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 14px 15px 8px;
+    margin-bottom: 10px;
+  }
+  .equity-top{
+    display:flex; justify-content:space-between; align-items:baseline;
+    margin-bottom: 6px;
+  }
+  .equity-value{
+    font-family: var(--mono);
+    font-size: 18px;
+    font-weight: 700;
+  }
+  .equity-value.pos{ color: var(--green); }
+  .equity-value.neg{ color: var(--red); }
+  .equity-sub{
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--text-faint);
+  }
+  .equity-svg{ width:100%; height: 90px; display:block; }
+
+  /* ---------- Pending orders ---------- */
+  .pending-card{
+    background: var(--bg-panel);
+    border: 1px solid var(--line);
+    border-right: 3px solid var(--text-dim);
+    border-radius: 10px;
+    padding: 12px 15px;
+    margin-bottom: 10px;
+  }
+  .pending-top{
+    display:flex; justify-content:space-between; align-items:baseline;
+    margin-bottom: 8px;
+  }
+  .pending-symbol{
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: 14px;
+    color: var(--text);
+  }
+  .pending-badge{
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-dim);
+    background: var(--bg-panel-raised);
+    padding: 2px 8px;
+    border-radius: 12px;
+    border: 1px solid var(--line);
+  }
+  .pending-grid{
+    display:grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px 12px;
+  }
+
   /* ---------- Trade history list ---------- */
   .filter-row{
     display:flex; gap:6px;
@@ -318,7 +378,7 @@
 <header>
   <div class="brand">
     <div class="brand-title">Scalping Talal Bot</div>
-    <div class="brand-sub">BOS + Order Block · Binance Spot</div>
+    <div class="brand-sub">Binance Spot</div>
   </div>
   <div class="live-pill"><span class="live-dot"></span>LIVE</div>
 </header>
@@ -372,6 +432,38 @@ function fmtNum(n, digits=2){
   const v = parseFloat(n);
   if(isNaN(v)) return '--';
   return v.toFixed(digits);
+}
+
+function buildEquitySvg(series){
+  if(!series || series.length < 2){
+    return `<div style="color:var(--text-faint); font-family:var(--mono); font-size:11px; padding:8px 0;">لا توجد بيانات كافية بعد</div>`;
+  }
+  const W = 600, H = 90, PAD = 4;
+  const min = Math.min(...series);
+  const max = Math.max(...series);
+  const spread = (max - min) || 1;
+  const stepX = (W - PAD*2) / (series.length - 1);
+  const pts = series.map((v, i) => {
+    const x = PAD + i * stepX;
+    const y = H - PAD - ((v - min) / spread) * (H - PAD*2);
+    return [x, y];
+  });
+  const lineD = pts.map((p,i) => (i===0 ? 'M' : 'L') + p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
+  const areaD = lineD + ` L${pts[pts.length-1][0].toFixed(1)},${H-PAD} L${pts[0][0].toFixed(1)},${H-PAD} Z`;
+  const rising = series[series.length-1] >= series[0];
+  const stroke = rising ? 'var(--green)' : 'var(--red)';
+  const fillId = 'eqfill';
+  return `
+    <svg class="equity-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+      <defs>
+        <linearGradient id="${fillId}" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="${rising ? '#3ddc84' : '#ff5c5c'}" stop-opacity="0.28"/>
+          <stop offset="100%" stop-color="${rising ? '#3ddc84' : '#ff5c5c'}" stop-opacity="0"/>
+        </linearGradient>
+      </defs>
+      <path d="${areaD}" fill="url(#${fillId})" stroke="none"/>
+      <path d="${lineD}" fill="none" stroke="${stroke}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    </svg>`;
 }
 
 function parseCSV(text){
@@ -553,7 +645,58 @@ function render(state, trades, livePrices){
     }).join('');
   }
 
+  // ---- equity curve (from closed trades' balance column) ----
+  const equitySeries = closed.slice().reverse() // oldest -> newest
+    .map(t => parseFloat(t.balance))
+    .filter(v => !isNaN(v));
+  if(equitySeries.length === 0 || equitySeries[0] !== INITIAL_CAPITAL) equitySeries.unshift(INITIAL_CAPITAL);
+  const equitySvg = buildEquitySvg(equitySeries);
+  const equityLast = equitySeries[equitySeries.length - 1];
+  const equityChangePct = ((equityLast - INITIAL_CAPITAL) / INITIAL_CAPITAL) * 100;
+
+  // ---- pending orders (signals not yet entered) ----
+  const pendingOrders = state && state.pending_orders ? state.pending_orders : (state && state.pending_signals ? state.pending_signals : {});
+  const pendingSymbols = Object.keys(pendingOrders);
+  let pendingHtml = '';
+  if(pendingSymbols.length === 0){
+    pendingHtml = `<div class="empty-state">لا توجد صفقات معلقة حالياً</div>`;
+  }else{
+    pendingHtml = pendingSymbols.map(sym => {
+      const p = pendingOrders[sym];
+      const side = p.side || p.direction || null;
+      const isBuy = side ? /buy|شراء/i.test(side) : null;
+      const sideLabel = isBuy === null ? '' : (isBuy ? 'شراء' : 'بيع');
+      const scorePct = p.score ? (parseFloat(p.score)*100).toFixed(0) : null;
+      return `
+      <div class="pending-card">
+        <div class="pending-top">
+          <span class="pending-symbol">${esc(sym)}</span>
+          <span class="pending-badge">${sideLabel}${scorePct ? (sideLabel ? ' · ' : '') + 'Score ' + scorePct + '%' : ''}</span>
+        </div>
+        <div class="pending-grid">
+          <div class="pos-field">
+            <div class="pos-field-label">وقت الإشارة</div>
+            <div class="pos-field-value">${fmtTime(p.signal_time)}</div>
+          </div>
+          <div class="pos-field">
+            <div class="pos-field-label">سعر الإشارة</div>
+            <div class="pos-field-value">${p.signal_price ? fmtNum(p.signal_price,4) : '--'}</div>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
   app.innerHTML = `
+    <div class="section-title">منحنى رأس المال</div>
+    <div class="equity-card">
+      <div class="equity-top">
+        <span class="equity-value ${equityChangePct>=0?'pos':'neg'}">${equityChangePct>=0?'+':''}${fmtNum(equityChangePct,2)}%</span>
+        <span class="equity-sub">${fmtNum(equityLast,2)}$</span>
+      </div>
+      ${equitySvg}
+    </div>
+
     <div class="heartbeat-section">
       <div class="heartbeat-label">نبض البوت — آخر الصفقات</div>
       <div class="heartbeat-strip">${hbHtml}</div>
@@ -583,6 +726,9 @@ function render(state, trades, livePrices){
 
     <div class="section-title">الصفقات المفتوحة <span class="count">${openSymbols.length}</span></div>
     ${posHtml}
+
+    <div class="section-title">الصفقات المعلقة <span class="count">${pendingSymbols.length}</span></div>
+    ${pendingHtml}
 
     <div class="section-title">سجل الصفقات <span class="count">${closed.length}</span></div>
     <div class="filter-row" id="filterRow">
