@@ -645,11 +645,12 @@ function render(state, trades, livePrices){
     }).join('');
   }
 
-  // ---- equity curve (from closed trades' balance column) ----
-  const equitySeries = closed.slice().reverse() // oldest -> newest
-    .map(t => parseFloat(t.balance))
-    .filter(v => !isNaN(v));
-  if(equitySeries.length === 0 || equitySeries[0] !== INITIAL_CAPITAL) equitySeries.unshift(INITIAL_CAPITAL);
+  // ---- equity curve (built from cumulative pnl_dollars, not the raw balance column,
+  //      since historical balance values in the CSV can be unreliable/stale) ----
+  const equitySeries = [INITIAL_CAPITAL];
+  closed.slice().reverse().forEach(t => { // oldest -> newest
+    equitySeries.push(equitySeries[equitySeries.length - 1] + t.pnl_dollars);
+  });
   const equitySvg = buildEquitySvg(equitySeries);
   const equityLast = equitySeries[equitySeries.length - 1];
   const equityChangePct = ((equityLast - INITIAL_CAPITAL) / INITIAL_CAPITAL) * 100;
