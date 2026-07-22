@@ -321,6 +321,7 @@
 </footer>
 
 <script>
+const INITIAL_CAPITAL = 10000;
 const REPO_RAW = "https://raw.githubusercontent.com/tlal1000666-ux/scalpingtalalbot/main";
 const STATE_URL = REPO_RAW + "/state.json?_=" + Date.now();
 const TRADES_URL = REPO_RAW + "/trades_log.csv?_=" + Date.now();
@@ -409,15 +410,17 @@ function render(state, trades){
 
   // ---- stats ----
   const closed = trades.filter(t => !isNaN(t.pnl_dollars));
-  const wins = closed.filter(t => reasonKey(t.exit_reason) === 'tp');
-  const losses = closed.filter(t => reasonKey(t.exit_reason) === 'sl');
+  // "ناجحة" = أي صفقة قفلت بربح، بغض النظر عن سبب الإغلاق (TP/SL/Timeout)
+  const wins = closed.filter(t => t.pnl_dollars > 0);
+  const losses = closed.filter(t => t.pnl_dollars <= 0);
   const winRate = closed.length ? (wins.length / closed.length * 100) : 0;
   const totalPnl = closed.reduce((s,t) => s + (isNaN(t.pnl_dollars)?0:t.pnl_dollars), 0);
   const lastBalance = closed.length ? closed[0].balance : null;
+  const roiPct = (totalPnl / INITIAL_CAPITAL) * 100;
 
   // ---- heartbeat strip: last ~40 trades (oldest->newest) + open as pulsing ----
   const hbTrades = closed.slice(0, 40).reverse();
-  let hbHtml = hbTrades.map(t => `<div class="hb-dot ${reasonKey(t.exit_reason)}" title="${esc(t.symbol)}"></div>`).join('');
+  let hbHtml = hbTrades.map(t => `<div class="hb-dot ${t.pnl_dollars > 0 ? 'tp' : 'sl'}" title="${esc(t.symbol)}"></div>`).join('');
   hbHtml += openSymbols.map(() => `<div class="hb-dot open"></div>`).join('');
   if(!hbHtml) hbHtml = `<div style="color:var(--text-faint); font-family:var(--mono); font-size:11px; padding:4px;">لا يوجد سجل بعد</div>`;
 
@@ -483,11 +486,14 @@ function render(state, trades){
     if(list.length === 0) return `<div class="empty-state">لا توجد صفقات في هذا التصنيف</div>`;
     return list.slice(0, 60).map(t => {
       const key = reasonKey(t.exit_reason);
-      const pnlClass = t.pnl_dollars > 0 ? 'pos' : t.pnl_dollars < 0 ? 'neg' : '';
-      const sign = t.pnl_dollars > 0 ? '+' : '';
+      const isWin = t.pnl_dollars > 0;
+      const outcomeClass = isWin ? 'tp' : 'sl'; // لون الأيقونة حسب نتيجة الصفقة (ربح/خسارة) وليس سبب الإغلاق
+      const outcomeIcon = isWin ? '▲' : '▼';
+      const pnlClass = isWin ? 'pos' : 'neg';
+      const sign = isWin ? '+' : '';
       return `
       <div class="trade-row">
-        <div class="trade-icon ${key}">${reasonIcon(key)}</div>
+        <div class="trade-icon ${outcomeClass}">${outcomeIcon}</div>
         <div class="trade-mid">
           <div class="trade-symbol">${esc(t.symbol)}</div>
           <div class="trade-time">${fmtTime(t.exit_time)} · ${reasonLabelAr(key)}</div>
@@ -514,16 +520,17 @@ function render(state, trades){
       <div class="stat-card">
         <div class="stat-label">معدل النجاح</div>
         <div class="stat-value">${closed.length ? winRate.toFixed(1)+'%' : '--'}</div>
-        <div class="stat-sub">${wins.length} TP / ${losses.length} SL</div>
+        <div class="stat-sub">${wins.length} رابحة / ${losses.length} خاسرة</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">صافي الربح/الخسارة</div>
         <div class="stat-value ${totalPnl>=0?'pos':'neg'}">${totalPnl>=0?'+':''}${fmtNum(totalPnl,2)}$</div>
+        <div class="stat-sub">${closed.length} صفقة مغلقة</div>
       </div>
       <div class="stat-card">
-        <div class="stat-label">الرصيد التقديري</div>
-        <div class="stat-value">${lastBalance ? fmtNum(lastBalance,1)+'$' : '--'}</div>
-        <div class="stat-sub">${closed.length} صفقة مغلقة</div>
+        <div class="stat-label">نسبة التغير على رأس المال</div>
+        <div class="stat-value ${roiPct>=0?'pos':'neg'}">${roiPct>=0?'+':''}${fmtNum(roiPct,2)}%</div>
+        <div class="stat-sub">رأس المال: ${INITIAL_CAPITAL.toLocaleString('en-US')}$</div>
       </div>
     </div>
 
