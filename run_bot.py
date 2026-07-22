@@ -28,8 +28,8 @@ import pandas as pd
 import strategy as strategy
 from utils import fetch_klines, send_telegram_message, get_telegram_updates, sleep_safe
 
-STATE_FILE = "state_bos.json"
-TRADES_LOG_FILE = "trades_log_bos.csv"
+STATE_FILE = "state.json"
+TRADES_LOG_FILE = "trades_log.csv"
 SYMBOLS_FILE = "symbols.txt"
 INTERVAL = "30m"
 INTERVAL_MINUTES = 30
@@ -311,22 +311,43 @@ def main():
     state = load_state()
     print(f"عدد الرموز المراقبة: {len(symbols)}")
 
+    try:
+        _run_cycle(state, symbols)
+    except Exception as e:
+        # لازم نحفظ الحالة حتى لو صار استثناء بأي مرحلة - وإلا أي إشارة/تفعيل/إغلاق
+        # اترسل فعليًا كرسالة تلجرام بهالدورة بيضيع من الحالة، وبيترسل تاني بالتشغيل الجاي
+        # (نفس مشكلة "تكرار إرسال نفس الإشارة").
+        print(f"⚠️ صار خطأ أثناء التشغيل: {e}")
+        raise
+    finally:
+        save_state(state)
+        print(f"مفتوحة: {len(state.get('open_positions', {}))} | معلّقة: {len(state.get('pending_setups', {}))} | الرصيد: ${state.get('balance', STARTING_BALANCE):,.2f}")
+        print("=== انتهى التشغيل ===")
+
+
+def _run_cycle(state, symbols):
     # ---------- 0) معالجة أي أوامر تفاعلية جديدة ----------
     handle_commands(state)
 
     # ---------- 1) جلب البيانات وحساب المؤشرات لكل رمز ----------
+    # كل رمز معزول بـtry/except مستقل: فشل رمز واحد (شبكة، بيانات ناقصة، إلخ)
+    # ما لازم يوقف معالجة باقي الرموز - وإلا أي إشارة/تفعيل صار لرموز سابقة بنفس
+    # الدورة بيضيع لأنه الكود بيتوقف قبل ما يوصل لقسم معالجتها.
     data = {}
     for sym in symbols:
-        df = fetch_klines(sym, interval=INTERVAL, limit=500)
-        sleep_safe(0.2)
-        if df is None or len(df) < 250:
+        try:
+            df = fetch_klines(sym, interval=INTERVAL, limit=500)
+            sleep_safe(0.2)
+            if df is None or len(df) < 250:
+                continue
+            df = strategy.compute_all_indicators(df)
+            data[sym] = df
+        except Exception as e:
+            print(f"  [تحذير] تخطي {sym} بسبب خطأ بجلب/معالجة البيانات: {e}")
             continue
-        df = strategy.compute_all_indicators(df)
-        data[sym] = df
 
     if not data:
         print("لم يتم جلب أي بيانات صالحة. حفظ الحالة والإيقاف.")
-        save_state(state)
         return
 
     pending_setups = state["pending_setups"]
@@ -338,52 +359,56 @@ def main():
     for sym in list(open_positions.keys()):
         if sym not in data:
             continue
-        pos = open_positions[sym]
-        df = data[sym]
-        signal_time = pd.Timestamp(pos["signal_time"])
-        entry_time = pd.Timestamp(pos.get("entry_time", pos["signal_time"]))
+        try:
+            pos = open_positions[sym]
+            df = data[sym]
+            signal_time = pd.Timestamp(pos["signal_time"])
+            entry_time = pd.Timestamp(pos.get("entry_time", pos["signal_time"]))
 
-        # نفس الحماية: صفقة مفتوحة فعليًا لازم نفحصها من entry_time على الأقل،
-        # حتى لو last_candle_seen مفقود أو أقدم من وقت الدخول (بوت كان متعطل مثلًا).
-        last_seen_key = state["last_candle_seen"].get(sym)
-        use_entry_fallback = last_seen_key is None
-        if not use_entry_fallback:
-            try:
-                if pd.Timestamp(last_seen_key) < entry_time:
+            # نفس الحماية: صفقة مفتوحة فعليًا لازم نفحصها من entry_time على الأقل،
+            # حتى لو last_candle_seen مفقود أو أقدم من وقت الدخول (بوت كان متعطل مثلًا).
+            last_seen_key = state["last_candle_seen"].get(sym)
+            use_entry_fallback = last_seen_key is None
+            if not use_entry_fallback:
+                try:
+                    if pd.Timestamp(last_seen_key) < entry_time:
+                        use_entry_fallback = True
+                except (ValueError, TypeError):
                     use_entry_fallback = True
-            except (ValueError, TypeError):
-                use_entry_fallback = True
 
-        if use_entry_fallback:
-            new_candles = df[df["open_time_utc"] >= entry_time].sort_values("open_time_utc")
-        else:
-            new_candles = _new_candles_since(df, last_seen_key)
+            if use_entry_fallback:
+                new_candles = df[df["open_time_utc"] >= entry_time].sort_values("open_time_utc")
+            else:
+                new_candles = _new_candles_since(df, last_seen_key)
 
-        for _, last in new_candles.iterrows():
-            bars_since_signal = int((last["open_time_utc"] - signal_time) / pd.Timedelta(minutes=INTERVAL_MINUTES))
+            for _, last in new_candles.iterrows():
+                bars_since_signal = int((last["open_time_utc"] - signal_time) / pd.Timedelta(minutes=INTERVAL_MINUTES))
 
-            hit_sl = last["low"] <= pos["sl"]
-            hit_tp = last["high"] >= pos["tp"]
+                hit_sl = last["low"] <= pos["sl"]
+                hit_tp = last["high"] >= pos["tp"]
 
-            exit_price, exit_reason = None, None
-            if hit_sl and hit_tp:
-                # تعارض: نفس الشمعة لمست SL وTP - ننزل لفريم الدقيقة للتأكد أيهم صار أول
-                order = _resolve_conflict_order(sym, last["open_time_utc"], pos["sl"], pos["tp"])
-                if order == "TP":
+                exit_price, exit_reason = None, None
+                if hit_sl and hit_tp:
+                    # تعارض: نفس الشمعة لمست SL وTP - ننزل لفريم الدقيقة للتأكد أيهم صار أول
+                    order = _resolve_conflict_order(sym, last["open_time_utc"], pos["sl"], pos["tp"])
+                    if order == "TP":
+                        exit_price, exit_reason = pos["tp"], "TP 🟢"
+                    else:
+                        exit_price, exit_reason = pos["sl"], "SL 🔴"  # fallback محافظ لو ما قدرنا نتأكد
+                elif hit_sl:
+                    exit_price, exit_reason = pos["sl"], "SL 🔴"
+                elif hit_tp:
                     exit_price, exit_reason = pos["tp"], "TP 🟢"
-                else:
-                    exit_price, exit_reason = pos["sl"], "SL 🔴"  # fallback محافظ لو ما قدرنا نتأكد
-            elif hit_sl:
-                exit_price, exit_reason = pos["sl"], "SL 🔴"
-            elif hit_tp:
-                exit_price, exit_reason = pos["tp"], "TP 🟢"
-            elif bars_since_signal > strategy.MAX_BARS_ACTIVE:
-                exit_price, exit_reason = last["close"], "Timeout ⏱️"
+                elif bars_since_signal > strategy.MAX_BARS_ACTIVE:
+                    exit_price, exit_reason = last["close"], "Timeout ⏱️"
 
-            if exit_price is not None:
-                _close_position(state, sym, pos, exit_price, exit_reason, last["open_time_utc"])
-                del open_positions[sym]
-                break
+                if exit_price is not None:
+                    _close_position(state, sym, pos, exit_price, exit_reason, last["open_time_utc"])
+                    del open_positions[sym]
+                    break
+        except Exception as e:
+            print(f"  [تحذير] تخطي فحص صفقة {sym} المفتوحة بسبب خطأ: {e}")
+            continue
 
     # ---------- 3) فحص الأوامر المعلّقة: تفعيل + متابعة SL/TP/Timeout بنفس الدورة ----------
     # بنمشي شمعة-شمعة بالترتيب الزمني لكل setup معلّق. أول ما تنلمس entry1 بشمعة معينة
@@ -394,144 +419,152 @@ def main():
     for sym in list(pending_setups.keys()):
         if sym not in data:
             continue
-        p = pending_setups[sym]
-        df = data[sym]
-        signal_time = pd.Timestamp(p["signal_time"])
+        try:
+            p = pending_setups[sym]
+            df = data[sym]
+            signal_time = pd.Timestamp(p["signal_time"])
 
-        # حماية إضافية: setup معلّق لازم منطقيًا نفحصه من signal_time على الأقل،
-        # حتى لو last_candle_seen مفقود أو (بغلط) أقدم/أحدث من الإشارة نفسها.
-        # هيك ما بتضيع شمعة تفعيل أو TP صارت وقت البوت كان متعطل ومالوش last_candle_seen محدّث.
-        last_seen_key = state["last_candle_seen"].get(sym)
-        use_signal_fallback = last_seen_key is None
-        if not use_signal_fallback:
-            try:
-                if pd.Timestamp(last_seen_key) < signal_time:
+            # حماية إضافية: setup معلّق لازم منطقيًا نفحصه من signal_time على الأقل،
+            # حتى لو last_candle_seen مفقود أو (بغلط) أقدم/أحدث من الإشارة نفسها.
+            # هيك ما بتضيع شمعة تفعيل أو TP صارت وقت البوت كان متعطل ومالوش last_candle_seen محدّث.
+            last_seen_key = state["last_candle_seen"].get(sym)
+            use_signal_fallback = last_seen_key is None
+            if not use_signal_fallback:
+                try:
+                    if pd.Timestamp(last_seen_key) < signal_time:
+                        use_signal_fallback = True
+                except (ValueError, TypeError):
                     use_signal_fallback = True
-            except (ValueError, TypeError):
-                use_signal_fallback = True
 
-        if use_signal_fallback:
-            new_candles = df[df["open_time_utc"] > signal_time].sort_values("open_time_utc")
-        else:
-            new_candles = _new_candles_since(df, last_seen_key)
+            if use_signal_fallback:
+                new_candles = df[df["open_time_utc"] > signal_time].sort_values("open_time_utc")
+            else:
+                new_candles = _new_candles_since(df, last_seen_key)
 
-        fill_candle = None
-        for _, c in new_candles.iterrows():
-            bars_since_signal = int((c["open_time_utc"] - signal_time) / pd.Timedelta(minutes=INTERVAL_MINUTES))
-            if c["low"] <= p["entry1"]:
-                fill_candle = c
-                break
-            elif bars_since_signal > strategy.MAX_BARS_ACTIVE:
-                del pending_setups[sym]
-                log_signal(state, "إلغاء", sym, "انتهى وقت الأمر المعلّق بدون تنفيذ")
-                break
+            fill_candle = None
+            for _, c in new_candles.iterrows():
+                bars_since_signal = int((c["open_time_utc"] - signal_time) / pd.Timedelta(minutes=INTERVAL_MINUTES))
+                if c["low"] <= p["entry1"]:
+                    fill_candle = c
+                    break
+                elif bars_since_signal > strategy.MAX_BARS_ACTIVE:
+                    del pending_setups[sym]
+                    log_signal(state, "إلغاء", sym, "انتهى وقت الأمر المعلّق بدون تنفيذ")
+                    break
 
-        if fill_candle is not None:
-            # نمرر باقي الشموع (من نفس شمعة التفعيل وطالع) عشان نكمل فحص SL/TP بنفس الدورة
-            remaining = new_candles[new_candles["open_time_utc"] >= fill_candle["open_time_utc"]]
-            fillable.append((sym, p, fill_candle, remaining))
+            if fill_candle is not None:
+                # نمرر باقي الشموع (من نفس شمعة التفعيل وطالع) عشان نكمل فحص SL/TP بنفس الدورة
+                remaining = new_candles[new_candles["open_time_utc"] >= fill_candle["open_time_utc"]]
+                fillable.append((sym, p, fill_candle, remaining))
+        except Exception as e:
+            print(f"  [تحذير] تخطي فحص setup معلّق {sym} بسبب خطأ: {e}")
+            continue
 
     fillable.sort(key=lambda x: x[1]["score"], reverse=True)
     for sym, p, fill_candle, remaining in fillable:
-        del pending_setups[sym]
-        available_slots = strategy.MAX_CONCURRENT_TRADES - len(open_positions)
-        if available_slots <= 0:
-            log_signal(state, "إلغاء", sym, "اترفض التنفيذ - المحفظة ممتلئة (3 صفقات)")
-            continue
+        try:
+            del pending_setups[sym]
+            available_slots = strategy.MAX_CONCURRENT_TRADES - len(open_positions)
+            if available_slots <= 0:
+                log_signal(state, "إلغاء", sym, "اترفض التنفيذ - المحفظة ممتلئة (3 صفقات)")
+                continue
 
-        entry_price = p["entry1"]
-        entry_time = fill_candle["open_time_utc"]
-        pos = {
-            "signal_time": p["signal_time"], "entry_time": str(entry_time),
-            "entry_price": entry_price, "sl": p["sl"], "tp": p["tp"], "score": p["score"],
-        }
+            entry_price = p["entry1"]
+            entry_time = fill_candle["open_time_utc"]
+            pos = {
+                "signal_time": p["signal_time"], "entry_time": str(entry_time),
+                "entry_price": entry_price, "sl": p["sl"], "tp": p["tp"], "score": p["score"],
+            }
 
-        time_str = pd.Timestamp(entry_time).strftime("%d %b %Y • %H:%M")
-        push(
-            f"📥 <b>تم تنفيذ الأمر</b>\n"
-            f"🪙 <b>{sym}</b>\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"💰 سعر التنفيذ: <b>{fmt_price(entry_price)}</b>\n"
-            f"🛑 وقف الخسارة: <b>{fmt_price(p['sl'])}</b>\n"
-            f"🎯 جني الأرباح: <b>{fmt_price(p['tp'])}</b>\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"📈 <a href=\"{tv_link(sym)}\">فتح الشارت على TradingView</a>\n"
-            f"🕒 {time_str} UTC"
-        )
-        log_signal(state, "تنفيذ", sym, f"دخول عند {fmt_price(entry_price)}")
+            time_str = pd.Timestamp(entry_time).strftime("%d %b %Y • %H:%M")
+            push(
+                f"📥 <b>تم تنفيذ الأمر</b>\n"
+                f"🪙 <b>{sym}</b>\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"💰 سعر التنفيذ: <b>{fmt_price(entry_price)}</b>\n"
+                f"🛑 وقف الخسارة: <b>{fmt_price(p['sl'])}</b>\n"
+                f"🎯 جني الأرباح: <b>{fmt_price(p['tp'])}</b>\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"📈 <a href=\"{tv_link(sym)}\">فتح الشارت على TradingView</a>\n"
+                f"🕒 {time_str} UTC"
+            )
+            log_signal(state, "تنفيذ", sym, f"دخول عند {fmt_price(entry_price)}")
 
-        # نفحص شمعة التفعيل نفسها ثم أي شموع تالية (من نفس هالدورة) للـSL/TP/Timeout
-        signal_time = pd.Timestamp(pos["signal_time"])
-        closed = False
-        for _, c in remaining.iterrows():
-            bars_since_signal = int((c["open_time_utc"] - signal_time) / pd.Timedelta(minutes=INTERVAL_MINUTES))
+            # نفحص شمعة التفعيل نفسها ثم أي شموع تالية (من نفس هالدورة) للـSL/TP/Timeout
+            signal_time = pd.Timestamp(pos["signal_time"])
+            closed = False
+            for _, c in remaining.iterrows():
+                bars_since_signal = int((c["open_time_utc"] - signal_time) / pd.Timedelta(minutes=INTERVAL_MINUTES))
 
-            hit_sl = c["low"] <= pos["sl"]
-            hit_tp = c["high"] >= pos["tp"]
+                hit_sl = c["low"] <= pos["sl"]
+                hit_tp = c["high"] >= pos["tp"]
 
-            exit_price, exit_reason = None, None
-            if hit_sl and hit_tp:
-                # تعارض: نفس الشمعة لمست SL وTP - ننزل لفريم الدقيقة للتأكد أيهم صار أول
-                order = _resolve_conflict_order(sym, c["open_time_utc"], pos["sl"], pos["tp"])
-                if order == "TP":
+                exit_price, exit_reason = None, None
+                if hit_sl and hit_tp:
+                    # تعارض: نفس الشمعة لمست SL وTP - ننزل لفريم الدقيقة للتأكد أيهم صار أول
+                    order = _resolve_conflict_order(sym, c["open_time_utc"], pos["sl"], pos["tp"])
+                    if order == "TP":
+                        exit_price, exit_reason = pos["tp"], "TP 🟢"
+                    else:
+                        exit_price, exit_reason = pos["sl"], "SL 🔴"  # fallback محافظ لو ما قدرنا نتأكد
+                elif hit_sl:
+                    exit_price, exit_reason = pos["sl"], "SL 🔴"
+                elif hit_tp:
                     exit_price, exit_reason = pos["tp"], "TP 🟢"
-                else:
-                    exit_price, exit_reason = pos["sl"], "SL 🔴"  # fallback محافظ لو ما قدرنا نتأكد
-            elif hit_sl:
-                exit_price, exit_reason = pos["sl"], "SL 🔴"
-            elif hit_tp:
-                exit_price, exit_reason = pos["tp"], "TP 🟢"
-            elif bars_since_signal > strategy.MAX_BARS_ACTIVE:
-                exit_price, exit_reason = c["close"], "Timeout ⏱️"
+                elif bars_since_signal > strategy.MAX_BARS_ACTIVE:
+                    exit_price, exit_reason = c["close"], "Timeout ⏱️"
 
-            if exit_price is not None:
-                _close_position(state, sym, pos, exit_price, exit_reason, c["open_time_utc"])
-                closed = True
-                break
+                if exit_price is not None:
+                    _close_position(state, sym, pos, exit_price, exit_reason, c["open_time_utc"])
+                    closed = True
+                    break
 
-        if not closed:
-            open_positions[sym] = pos
+            if not closed:
+                open_positions[sym] = pos
+        except Exception as e:
+            print(f"  [تحذير] خطأ أثناء تنفيذ/متابعة {sym}: {e}")
+            continue
 
     # ---------- 4) فحص إشارات BOS+OB جديدة (بس على رموز خالية من setup حاليًا) ----------
     for sym, df in data.items():
         if sym in open_positions or sym in pending_setups:
             continue
-        last_seen = state["last_candle_seen"].get(sym)
-        candle_key = str(df.iloc[-1]["open_time_utc"])
-        if last_seen == candle_key:
-            continue
+        try:
+            last_seen = state["last_candle_seen"].get(sym)
+            candle_key = str(df.iloc[-1]["open_time_utc"])
+            if last_seen == candle_key:
+                continue
 
-        sig = strategy.check_new_signal(df)
-        if sig:
-            pending_setups[sym] = {
-                "signal_time": str(sig["signal_time"]),
-                "entry1": sig["entry1"], "sl": sig["sl"], "tp": sig["tp"],
-                "score": sig["score"],
-            }
-            time_str = pd.Timestamp(sig["signal_time"]).strftime("%d %b %Y • %H:%M")
-            push(
-                f"🚨 <b>إشارة دخول جديدة</b>\n"
-                f"🪙 <b>{sym}</b>\n"
-                f"━━━━━━━━━━━━━━━━━━\n"
-                f"💰 سعر الدخول (Limit): <b>{fmt_price(sig['entry1'])}</b>\n"
-                f"🛑 وقف الخسارة: <b>{fmt_price(sig['sl'])}</b>\n"
-                f"🎯 جني الأرباح: <b>{fmt_price(sig['tp'])}</b>\n"
-                f"📦 حجم الصفقة: <b>{strategy.POSITION_SIZE_PCT*100:.0f}% من رأس المال</b>\n"
-                f"📊 قوة الإشارة: <b>{sig['score']*100:.0f}%</b>\n"
-                f"━━━━━━━━━━━━━━━━━━\n"
-                f"📈 <a href=\"{tv_link(sym)}\">فتح الشارت على TradingView</a>\n"
-                f"🕒 {time_str} UTC\n"
-                f"⏳ بانتظار لمس سعر الدخول (حد أقصى {strategy.MAX_BARS_ACTIVE} شمعة)\n"
-                f"⚠️ توصية آلية من نظام باكتست، وليست نصيحة مالية."
-            )
-            log_signal(state, "إشارة", sym, f"Setup معلّق عند {fmt_price(sig['entry1'])}")
+            sig = strategy.check_new_signal(df)
+            if sig:
+                pending_setups[sym] = {
+                    "signal_time": str(sig["signal_time"]),
+                    "entry1": sig["entry1"], "sl": sig["sl"], "tp": sig["tp"],
+                    "score": sig["score"],
+                }
+                time_str = pd.Timestamp(sig["signal_time"]).strftime("%d %b %Y • %H:%M")
+                push(
+                    f"🚨 <b>إشارة دخول جديدة</b>\n"
+                    f"🪙 <b>{sym}</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━\n"
+                    f"💰 سعر الدخول (Limit): <b>{fmt_price(sig['entry1'])}</b>\n"
+                    f"🛑 وقف الخسارة: <b>{fmt_price(sig['sl'])}</b>\n"
+                    f"🎯 جني الأرباح: <b>{fmt_price(sig['tp'])}</b>\n"
+                    f"📦 حجم الصفقة: <b>{strategy.POSITION_SIZE_PCT*100:.0f}% من رأس المال</b>\n"
+                    f"📊 قوة الإشارة: <b>{sig['score']*100:.0f}%</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━\n"
+                    f"📈 <a href=\"{tv_link(sym)}\">فتح الشارت على TradingView</a>\n"
+                    f"🕒 {time_str} UTC\n"
+                    f"⏳ بانتظار لمس سعر الدخول (حد أقصى {strategy.MAX_BARS_ACTIVE} شمعة)\n"
+                    f"⚠️ توصية آلية من نظام باكتست، وليست نصيحة مالية."
+                )
+                log_signal(state, "إشارة", sym, f"Setup معلّق عند {fmt_price(sig['entry1'])}")
+        except Exception as e:
+            print(f"  [تحذير] تخطي فحص إشارة جديدة لـ{sym} بسبب خطأ: {e}")
+            continue
 
     for sym, df in data.items():
         state["last_candle_seen"][sym] = str(df.iloc[-1]["open_time_utc"])
-
-    save_state(state)
-    print(f"مفتوحة: {len(open_positions)} | معلّقة: {len(pending_setups)} | الرصيد: ${state['balance']:,.2f}")
-    print("=== انتهى التشغيل ===")
 
 
 def _close_position(state, sym, pos, exit_price, exit_reason, exit_time):
