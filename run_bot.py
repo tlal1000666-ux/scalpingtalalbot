@@ -471,9 +471,12 @@ def _run_cycle(state, symbols):
 
             entry_price = p["entry1"]
             entry_time = fill_candle["open_time_utc"]
+            # حجم الصفقة يتحدد وقت التنفيذ (الفتح) ويتثبّت لحد الإغلاق - مش وقت الإغلاق
+            position_dollars = state["balance"] * strategy.POSITION_SIZE_PCT
             pos = {
                 "signal_time": p["signal_time"], "entry_time": str(entry_time),
                 "entry_price": entry_price, "sl": p["sl"], "tp": p["tp"], "score": p["score"],
+                "position_dollars": position_dollars,
             }
 
             signal_time_iso = pos["signal_time"]
@@ -571,7 +574,10 @@ def _close_position(state, sym, pos, exit_price, exit_reason, exit_time):
     round_trip_cost = strategy.ROUND_TRIP_COST_PCT
     pnl_pct = (exit_price - pos["entry_price"]) / pos["entry_price"] * 100 - round_trip_cost
 
-    position_dollars = state["balance"] * strategy.POSITION_SIZE_PCT
+    position_dollars = pos.get("position_dollars")
+    if position_dollars is None:
+        # احتياط لصفقات قديمة محفوظة في state.json قبل هذا التصحيح
+        position_dollars = state["balance"] * strategy.POSITION_SIZE_PCT
     pnl_dollars = position_dollars * pnl_pct / 100
     state["balance"] = state.get("balance", STARTING_BALANCE) + pnl_dollars
 
@@ -605,6 +611,8 @@ def _close_position(state, sym, pos, exit_price, exit_reason, exit_time):
     else:  # Timeout بخسارة
         header = "❌ إغلاق خاسر (LOSS)"
 
+    total_return_pct = (state["balance"] - STARTING_BALANCE) / STARTING_BALANCE * 100
+
     msg = (
         f"{header}\n\n"
         f"💎 Pair: #{sym}\n"
@@ -612,7 +620,9 @@ def _close_position(state, sym, pos, exit_price, exit_reason, exit_time):
         f"🕒 وقت الإغلاق: {close_time_str} (GMT+3)\n\n"
         f"Entry: {fmt_price(pos['entry_price'])}\n"
         f"Exit: {fmt_price(exit_price)}\n"
-        f"PnL: {pnl_pct:+.2f}%"
+        f"PnL: {pnl_pct:+.2f}%\n\n"
+        f"💰 رأس المال (افتراضي/محاكاة): ${state['balance']:,.2f}\n"
+        f"📈 التغيّر التراكمي على رأس المال: {total_return_pct:+.2f}%"
     )
     push(msg)
     log_signal(state, "خروج", sym, f"{exit_reason} {pnl_pct:+.2f}%")
@@ -624,6 +634,7 @@ def _close_position(state, sym, pos, exit_price, exit_reason, exit_time):
         "exit_price": exit_price,
         "pnl_pct_net": round(pnl_pct, 4),
         "pnl_dollars": round(pnl_dollars, 2),
+        "position_dollars": round(position_dollars, 2),
         "exit_reason": exit_reason,
         "score": pos.get("score", ""),
         "balance_after": round(state["balance"], 2),
