@@ -476,17 +476,12 @@ def _run_cycle(state, symbols):
                 "entry_price": entry_price, "sl": p["sl"], "tp": p["tp"], "score": p["score"],
             }
 
-            time_str = pd.Timestamp(entry_time).strftime("%d %b %Y • %H:%M")
+            signal_time_iso = pos["signal_time"]
             push(
-                f"📥 <b>تم تنفيذ الأمر</b>\n"
-                f"🪙 <b>{sym}</b>\n"
-                f"━━━━━━━━━━━━━━━━━━\n"
-                f"💰 سعر التنفيذ: <b>{fmt_price(entry_price)}</b>\n"
-                f"🛑 وقف الخسارة: <b>{fmt_price(p['sl'])}</b>\n"
-                f"🎯 جني الأرباح: <b>{fmt_price(p['tp'])}</b>\n"
-                f"━━━━━━━━━━━━━━━━━━\n"
-                f"📈 <a href=\"{tv_link(sym)}\">فتح الشارت على TradingView</a>\n"
-                f"🕒 {time_str} UTC"
+                f"⚡ تم تفعيل الصفقة (ACT) \n\n"
+                f"💎 Pair: #{sym}\n"
+                f"📅 وقت الفتح: {signal_time_iso}\n\n"
+                f"Entry: {fmt_price(entry_price)}"
             )
             log_signal(state, "تنفيذ", sym, f"دخول عند {fmt_price(entry_price)}")
 
@@ -542,21 +537,25 @@ def _run_cycle(state, symbols):
                     "entry1": sig["entry1"], "sl": sig["sl"], "tp": sig["tp"],
                     "score": sig["score"],
                 }
-                time_str = pd.Timestamp(sig["signal_time"]).strftime("%d %b %Y • %H:%M")
+                time_str = pd.Timestamp(sig["signal_time"]).strftime("%d/%m/%Y %H:%M")
                 push(
-                    f"🚨 <b>إشارة دخول جديدة</b>\n"
-                    f"🪙 <b>{sym}</b>\n"
-                    f"━━━━━━━━━━━━━━━━━━\n"
-                    f"💰 سعر الدخول (Limit): <b>{fmt_price(sig['entry1'])}</b>\n"
-                    f"🛑 وقف الخسارة: <b>{fmt_price(sig['sl'])}</b>\n"
-                    f"🎯 جني الأرباح: <b>{fmt_price(sig['tp'])}</b>\n"
-                    f"📦 حجم الصفقة: <b>{strategy.POSITION_SIZE_PCT*100:.0f}% من رأس المال</b>\n"
-                    f"📊 قوة الإشارة: <b>{sig['score']*100:.0f}%</b>\n"
-                    f"━━━━━━━━━━━━━━━━━━\n"
-                    f"📈 <a href=\"{tv_link(sym)}\">فتح الشارت على TradingView</a>\n"
-                    f"🕒 {time_str} UTC\n"
-                    f"⏳ بانتظار لمس سعر الدخول (حد أقصى {strategy.MAX_BARS_ACTIVE} شمعة)\n"
-                    f"⚠️ توصية آلية من نظام باكتست، وليست نصيحة مالية."
+                    f"⚡ Scalping Talal Bot ⚡\n"
+                    f"🌟 بسم الله توكلت على الله 🌟\n\n"
+                    f"💎 Pair: #{sym}\n"
+                    f"💎 Exchange: BINANCE\n"
+                    f"⏳ Timeframe: 5m\n"
+                    f"📅 Time: {time_str} (GMT+3)\n\n"
+                    f"💰 Entry ➤ {fmt_price(sig['entry1'])}\n\n"
+                    f"🎯 Target\n"
+                    f"1️⃣ T1 ➤ {fmt_price(sig['tp'])}\n"
+                    f"• From Entry: {(sig['tp']-sig['entry1'])/sig['entry1']*100:+.2f}%\n\n"
+                    f"🔴 SL ➤ {fmt_price(sig['sl'])}\n"
+                    f"• From Entry: {(sig['sl']-sig['entry1'])/sig['entry1']*100:+.2f}%\n\n"
+                    f"📊 نقاط الثقة (Score): {sig['score']*100:.0f}/100\n\n"
+                    f"⚡ كن ذكيًا في إدارة مراكزك، فإدارة الصفقة نصف النجاح\n\n"
+                    f"⚡ Scalping Talal Bot ⚡\n"
+                    f"🏢 @Dr_talaltrke\n"
+                    f"📊 <a href=\"{tv_link(sym)}\">فتح الشارت على TradingView</a>"
                 )
                 log_signal(state, "إشارة", sym, f"Setup معلّق عند {fmt_price(sig['entry1'])}")
         except Exception as e:
@@ -594,41 +593,26 @@ def _close_position(state, sym, pos, exit_price, exit_reason, exit_time):
     is_sl = exit_reason.startswith("SL")
     is_win = pnl_pct > 0
 
-    sep = "━━━━━━━━━━━━━━━━━━"
-    tv = tv_link(sym)
-    body = (
-        f"🪙 <b>{sym}</b>\n{sep}\n"
-        f"📥 الدخول : {fmt_price(pos['entry_price'])}\n"
-        f"📤 الخروج : {fmt_price(exit_price)}\n"
-    )
+    signal_time_iso = pos["signal_time"]
+    close_time_str = pd.Timestamp(exit_time).strftime("%d/%m/%Y %H:%M")
 
     if is_tp:
-        header = "🟢🟢🟢🟢🟢🟢🟢\n🏆 <b>تم تحقيق الهدف</b>\n"
-        reason_line = "🎯 السبب: جني الأرباح\n"
-        result_lines = f"📈 العائد : <b>{pnl_pct:+.2f}%</b>\n💵 الربح : <b>{pnl_dollars:+,.2f}$</b>\n"
-        footer = f"💚 تمت الصفقة بنجاح."
+        header = "✅ تحقق الهدف ولله الحمد (WIN) "
     elif is_sl:
-        header = "🔴🔴🔴🔴🔴\n🛑 <b>تم تفعيل وقف الخسارة</b>\n"
-        reason_line = ""
-        result_lines = f"📉 العائد : <b>{pnl_pct:+.2f}%</b>\n💸 الخسارة : <b>{pnl_dollars:+,.2f}$</b>\n"
-        footer = ""
+        header = "❌ ضرب وقف الخسارة (LOSS)"
     elif is_win:  # Timeout بربح
-        header = "🟢🟢🟢✨🟢🟢\n💚 <b>إغلاق رابح</b>\n"
-        reason_line = "⏱️ السبب: انتهاء مدة الصفقة\n"
-        result_lines = f"📈 العائد : <b>{pnl_pct:+.2f}%</b>\n💵 الربح : <b>{pnl_dollars:+,.2f}$</b>\n"
-        footer = "✨ تم الاحتفاظ بالأرباح حتى نهاية مدة الصفقة."
+        header = "✅ إغلاق رابح ولله الحمد (WIN) "
     else:  # Timeout بخسارة
-        header = "🟠\n⏱️ <b>انتهاء مدة الصفقة</b>\n"
-        reason_line = ""
-        result_lines = f"📉 العائد : <b>{pnl_pct:+.2f}%</b>\n💸 الخسارة : <b>{pnl_dollars:+,.2f}$</b>\n"
-        footer = ""
+        header = "❌ إغلاق خاسر (LOSS)"
 
     msg = (
-        f"{header}{body}{reason_line}{result_lines}"
-        f"⏳ مدة الصفقة : {bars_held} شمعة\n{sep}\n"
-        f"📈 <a href=\"{tv}\">فتح الشارت على TradingView</a>\n"
-        f"💼 الرصيد الحالي <b>${state['balance']:,.2f}</b>"
-        + (f"\n{footer}" if footer else "")
+        f"{header}\n\n"
+        f"💎 Pair: #{sym}\n"
+        f"📅 وقت الفتح: {signal_time_iso}\n"
+        f"🕒 وقت الإغلاق: {close_time_str} (GMT+3)\n\n"
+        f"Entry: {fmt_price(pos['entry_price'])}\n"
+        f"Exit: {fmt_price(exit_price)}\n"
+        f"PnL: {pnl_pct:+.2f}%"
     )
     push(msg)
     log_signal(state, "خروج", sym, f"{exit_reason} {pnl_pct:+.2f}%")
