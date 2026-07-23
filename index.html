@@ -401,16 +401,17 @@
 </div>
 
 <footer>
-  يقرأ مباشرة من state.json و trades_log.csv · تحديث عند فتح الصفحة<br>
-  <a href="https://github.com/tlal1000666-ux/scalpingtalalbot" target="_blank">github.com/tlal1000666-ux/scalpingtalalbot</a>
+  يقرأ مباشرة من state.json و trades_log.csv · تحديث عند فتح الصفحة
 </footer>
 
 <script>
 const INITIAL_CAPITAL = 10000;
-const REPO_RAW = "https://raw.githubusercontent.com/tlal1000666-ux/scalpingtalalbot/main";
-const STATE_URL = REPO_RAW + "/state.json?_=" + Date.now();
-const TRADES_URL = REPO_RAW + "/trades_log.csv?_=" + Date.now();
-const SHADOW_TRADES_URL = REPO_RAW + "/shadow_trades_log.csv?_=" + Date.now();
+// مسارات نسبية (نفس مجلد الصفحة على GitHub Pages) - بهيك المتصفح ما يطلب من
+// raw.githubusercontent.com ولا يكشف اسم المستودع أو الحساب لأي زائر للموقع.
+// هذا شغال حتى لو المستودع نفسه Private، لأن GitHub Pages بيضل يعرض الموقع للعموم.
+const STATE_URL = "./state.json?_=" + Date.now();
+const TRADES_URL = "./trades_log.csv?_=" + Date.now();
+const SHADOW_TRADES_URL = "./shadow_trades_log.csv?_=" + Date.now();
 
 const app = document.getElementById('app');
 
