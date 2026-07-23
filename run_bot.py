@@ -30,6 +30,7 @@ from utils import fetch_klines, send_telegram_message, get_telegram_updates, sle
 
 STATE_FILE = "state.json"
 TRADES_LOG_FILE = "trades_log.csv"
+SHADOW_TRADES_LOG_FILE = "shadow_trades_log.csv"   # سجل الصفقات الموازية (بدون حد تزامن)
 SYMBOLS_FILE = "symbols.txt"
 INTERVAL = "30m"
 INTERVAL_MINUTES = 30
@@ -54,6 +55,14 @@ def default_state():
         "stats": {"total_trades": 0, "wins": 0, "losses": 0, "gross_profit": 0.0, "gross_loss": 0.0},
         "last_update_id": 0,
         "signal_history": [],
+        # ---- تتبّع موازي (Shadow) بدون قيد MAX_CONCURRENT_TRADES ----
+        # مسار كامل موازي: نفس الإشارات بالضبط، بس بدون حد 3 صفقات متزامنة.
+        # لا يؤثر إطلاقًا على open_positions/pending_setups/balance/stats الحقيقية،
+        # ولا يرسل رسائل تلجرام - فقط لأغراض المقارنة/الإحصاء.
+        "shadow_pending_setups": {},
+        "shadow_open_positions": {},
+        "shadow_balance": STARTING_BALANCE,
+        "shadow_stats": {"total_trades": 0, "wins": 0, "losses": 0, "gross_profit": 0.0, "gross_loss": 0.0},
     }
 
 
@@ -76,6 +85,16 @@ def save_state(state):
 def append_trade_log(row: dict):
     file_exists = os.path.exists(TRADES_LOG_FILE)
     with open(TRADES_LOG_FILE, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=list(row.keys()))
+        if not file_exists:
+            writer.writeheader()
+        writer.writerow(row)
+
+
+def append_shadow_trade_log(row: dict):
+    """سجل منفصل تمامًا لصفقات المسار الموازي (بدون حد تزامن) - لا يمس trades_log.csv الحقيقي."""
+    file_exists = os.path.exists(SHADOW_TRADES_LOG_FILE)
+    with open(SHADOW_TRADES_LOG_FILE, "a", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=list(row.keys()))
         if not file_exists:
             writer.writeheader()
@@ -148,6 +167,8 @@ def handle_commands(state):
             handle_stats(state, chat_id)
         elif text in ("/signals", "/last", "/آخر"):
             handle_signals(state, chat_id)
+        elif text in ("/shadow", "/بدون_حد", "/بدونحد"):
+            handle_shadow_stats(state, chat_id)
         elif text in ("/start", "/help", "/مساعدة"):
             handle_help(chat_id)
 
@@ -225,6 +246,56 @@ def handle_stats(state, chat_id):
     reply(chat_id, msg)
 
 
+def handle_shadow_stats(state, chat_id):
+    """إحصائيات كاملة لمسار الظل - يوضح كيف كان ممكن يصير الأداء لو ما فيه قيد
+    على عدد الصفقات المتزامنة (MAX_CONCURRENT_TRADES). لا يؤثر إطلاقًا على الحقيقي."""
+    s = state.get("shadow_stats", {})
+    total = s.get("total_trades", 0)
+    balance = state.get("shadow_balance", STARTING_BALANCE)
+    total_return_pct = (balance - STARTING_BALANCE) / STARTING_BALANCE * 100
+    open_count = len(state.get("shadow_open_positions", {}))
+    pending_count = len(state.get("shadow_pending_setups", {}))
+
+    if total == 0:
+        msg = (
+            f"🌓 <b>إحصائيات بدون حد (Shadow — بدون قيد {strategy.MAX_CONCURRENT_TRADES} صفقات)</b>\n"
+            f"ما فيه صفقات مغلقة لسا بهالمسار.\n"
+            f"مفتوحة الآن: {open_count} | معلّقة: {pending_count}\n"
+            f"الرصيد الافتراضي: ${balance:,.2f}"
+        )
+        reply(chat_id, msg)
+        return
+
+    wins = s.get("wins", 0)
+    losses = s.get("losses", 0)
+    win_rate = wins / total * 100 if total else 0
+    gross_profit = s.get("gross_profit", 0.0)
+    gross_loss = s.get("gross_loss", 0.0)
+    profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else float("inf")
+    pf_str = f"{profit_factor:.2f}" if profit_factor != float("inf") else "∞"
+
+    # مقارنة سريعة مع المسار الحقيقي لنفس اللحظة
+    real_s = state.get("stats", {})
+    real_total = real_s.get("total_trades", 0)
+    real_balance = state.get("balance", STARTING_BALANCE)
+    real_return_pct = (real_balance - STARTING_BALANCE) / STARTING_BALANCE * 100
+
+    msg = (
+        f"🌓 <b>إحصائيات بدون حد (Shadow — بدون قيد {strategy.MAX_CONCURRENT_TRADES} صفقات متزامنة)</b>\n"
+        f"إجمالي الصفقات: {total}\n"
+        f"رابحة: {wins} | خاسرة: {losses}\n"
+        f"Win Rate: {win_rate:.2f}%\n"
+        f"Profit Factor: {pf_str}\n"
+        f"العائد التراكمي: {total_return_pct:+.2f}%\n"
+        f"الرصيد الافتراضي: ${balance:,.2f}\n"
+        f"مفتوحة الآن: {open_count} | معلّقة: {pending_count}\n\n"
+        f"📌 <b>مقارنة مع الحقيقي (بحد {strategy.MAX_CONCURRENT_TRADES} صفقات)</b>\n"
+        f"صفقات حقيقية: {real_total} | عائد حقيقي: {real_return_pct:+.2f}%\n"
+        f"الفرق بالعائد: {(total_return_pct - real_return_pct):+.2f}%"
+    )
+    reply(chat_id, msg)
+
+
 def handle_signals(state, chat_id):
     history = state.get("signal_history", [])
     if not history:
@@ -244,6 +315,7 @@ def handle_help(chat_id):
         "/pending — الأوامر المعلّقة (بانتظار لمس سعر الدخول)\n"
         "/stats — إحصائيات الأداء التراكمية\n"
         "/signals — آخر 10 إشارات دخول/خروج\n"
+        "/shadow — إحصائيات كاملة بدون حد على عدد الصفقات المتزامنة (للمقارنة فقط)\n"
         "/help — عرض هذه القائمة\n\n"
         "⚠️ ملاحظة: البوت يفحص أوامرك بس وقت تشغيله (كل 30 دقيقة تقريبًا)، فالرد ممكن ياخذ لين نص ساعة."
     )
@@ -322,6 +394,7 @@ def main():
     finally:
         save_state(state)
         print(f"مفتوحة: {len(state.get('open_positions', {}))} | معلّقة: {len(state.get('pending_setups', {}))} | الرصيد: ${state.get('balance', STARTING_BALANCE):,.2f}")
+        print(f"[Shadow/بدون حد] مفتوحة: {len(state.get('shadow_open_positions', {}))} | معلّقة: {len(state.get('shadow_pending_setups', {}))} | الرصيد: ${state.get('shadow_balance', STARTING_BALANCE):,.2f} | صفقات مغلقة: {state.get('shadow_stats', {}).get('total_trades', 0)}")
         print("=== انتهى التشغيل ===")
 
 
@@ -352,6 +425,8 @@ def _run_cycle(state, symbols):
 
     pending_setups = state["pending_setups"]
     open_positions = state["open_positions"]
+    shadow_pending_setups = state["shadow_pending_setups"]
+    shadow_open_positions = state["shadow_open_positions"]
 
     # ---------- 2) فحص الصفقات المفتوحة فعليًا (SL / TP / Timeout) ----------
     # نفحص كل شمعة جديدة اتقفلت من آخر تشغيل ناجح (مو بس آخر وحدة)، بالترتيب الزمني،
@@ -408,6 +483,60 @@ def _run_cycle(state, symbols):
                     break
         except Exception as e:
             print(f"  [تحذير] تخطي فحص صفقة {sym} المفتوحة بسبب خطأ: {e}")
+            continue
+
+    # ---------- 2ب) فحص صفقات الظل المفتوحة (نفس منطق خطوة 2 بالضبط) ----------
+    # مسار موازٍ مستقل تمامًا: لا يقرأ ولا يكتب على open_positions/state["last_candle_seen"]
+    # الحقيقية، فما فيه أي احتمال يأثر على المسار الحقيقي.
+    for sym in list(shadow_open_positions.keys()):
+        if sym not in data:
+            continue
+        try:
+            pos = shadow_open_positions[sym]
+            df = data[sym]
+            signal_time = pd.Timestamp(pos["signal_time"])
+            entry_time = pd.Timestamp(pos.get("entry_time", pos["signal_time"]))
+
+            last_seen_key = state["last_candle_seen"].get(sym)
+            use_entry_fallback = last_seen_key is None
+            if not use_entry_fallback:
+                try:
+                    if pd.Timestamp(last_seen_key) < entry_time:
+                        use_entry_fallback = True
+                except (ValueError, TypeError):
+                    use_entry_fallback = True
+
+            if use_entry_fallback:
+                new_candles = df[df["open_time_utc"] >= entry_time].sort_values("open_time_utc")
+            else:
+                new_candles = _new_candles_since(df, last_seen_key)
+
+            for _, last in new_candles.iterrows():
+                bars_since_signal = int((last["open_time_utc"] - signal_time) / pd.Timedelta(minutes=INTERVAL_MINUTES))
+
+                hit_sl = last["low"] <= pos["sl"]
+                hit_tp = last["high"] >= pos["tp"]
+
+                exit_price, exit_reason = None, None
+                if hit_sl and hit_tp:
+                    order = _resolve_conflict_order(sym, last["open_time_utc"], pos["sl"], pos["tp"])
+                    if order == "TP":
+                        exit_price, exit_reason = pos["tp"], "TP 🟢"
+                    else:
+                        exit_price, exit_reason = pos["sl"], "SL 🔴"
+                elif hit_sl:
+                    exit_price, exit_reason = pos["sl"], "SL 🔴"
+                elif hit_tp:
+                    exit_price, exit_reason = pos["tp"], "TP 🟢"
+                elif bars_since_signal > strategy.MAX_BARS_ACTIVE:
+                    exit_price, exit_reason = last["close"], "Timeout ⏱️"
+
+                if exit_price is not None:
+                    _close_shadow_position(state, sym, pos, exit_price, exit_reason, last["open_time_utc"])
+                    del shadow_open_positions[sym]
+                    break
+        except Exception as e:
+            print(f"  [تحذير] تخطي فحص صفقة ظل {sym} المفتوحة بسبب خطأ: {e}")
             continue
 
     # ---------- 3) فحص الأوامر المعلّقة: تفعيل + متابعة SL/TP/Timeout بنفس الدورة ----------
@@ -523,9 +652,99 @@ def _run_cycle(state, symbols):
             print(f"  [تحذير] خطأ أثناء تنفيذ/متابعة {sym}: {e}")
             continue
 
+    # ---------- 3ب) نفس setups القابلة للتفعيل (fillable) بس على مسار الظل - بدون قيد تزامن ----------
+    # نعيد استخدام نفس fillable المحسوبة فوق (نفس الإشارات، نفس شموع التفعيل) لتفادي
+    # إعادة حساب الإشارة مرتين. الفرق الوحيد: ما فيه available_slots <= 0 يوقف الدخول.
+    for sym, p, fill_candle, remaining in fillable:
+        try:
+            entry_price = p["entry1"]
+            entry_time = fill_candle["open_time_utc"]
+            position_dollars = state["shadow_balance"] * strategy.POSITION_SIZE_PCT
+            pos = {
+                "signal_time": p["signal_time"], "entry_time": str(entry_time),
+                "entry_price": entry_price, "sl": p["sl"], "tp": p["tp"], "score": p["score"],
+                "position_dollars": position_dollars,
+            }
+
+            signal_time = pd.Timestamp(pos["signal_time"])
+            closed = False
+            for _, c in remaining.iterrows():
+                bars_since_signal = int((c["open_time_utc"] - signal_time) / pd.Timedelta(minutes=INTERVAL_MINUTES))
+
+                hit_sl = c["low"] <= pos["sl"]
+                hit_tp = c["high"] >= pos["tp"]
+
+                exit_price, exit_reason = None, None
+                if hit_sl and hit_tp:
+                    order = _resolve_conflict_order(sym, c["open_time_utc"], pos["sl"], pos["tp"])
+                    if order == "TP":
+                        exit_price, exit_reason = pos["tp"], "TP 🟢"
+                    else:
+                        exit_price, exit_reason = pos["sl"], "SL 🔴"
+                elif hit_sl:
+                    exit_price, exit_reason = pos["sl"], "SL 🔴"
+                elif hit_tp:
+                    exit_price, exit_reason = pos["tp"], "TP 🟢"
+                elif bars_since_signal > strategy.MAX_BARS_ACTIVE:
+                    exit_price, exit_reason = c["close"], "Timeout ⏱️"
+
+                if exit_price is not None:
+                    _close_shadow_position(state, sym, pos, exit_price, exit_reason, c["open_time_utc"])
+                    closed = True
+                    break
+
+            if not closed:
+                shadow_open_positions[sym] = pos
+            # ملاحظة: shadow_pending_setups[sym] لو كان موجود اترفع فوق بخطوة 3ج (نفس pending_setups تمامًا)،
+            # وهون منشيله بعد ما صار fill عشان ما يضل معلّق بالخطأ.
+            shadow_pending_setups.pop(sym, None)
+        except Exception as e:
+            print(f"  [تحذير] خطأ أثناء تنفيذ/متابعة ظل {sym}: {e}")
+            continue
+
+    # ---------- 3ج) إلغاء shadow setups يلي انتهى وقتها بدون تفعيل (نفس منطق الحقيقي) ----------
+    # الحقيقي بيلغي setups منتهية الوقت جوا نفس الحلقة (سطر del pending_setups[sym] فوق)، ومنعمّل
+    # shadow_pending_setups[sym] هون كمان (بنفس فحص bars_since_signal) عشان ما يضل معلّق للأبد.
+    for sym in list(shadow_pending_setups.keys()):
+        if sym not in data:
+            continue
+        try:
+            p = shadow_pending_setups[sym]
+            df = data[sym]
+            signal_time = pd.Timestamp(p["signal_time"])
+            last_seen_key = state["last_candle_seen"].get(sym)
+            use_signal_fallback = last_seen_key is None
+            if not use_signal_fallback:
+                try:
+                    if pd.Timestamp(last_seen_key) < signal_time:
+                        use_signal_fallback = True
+                except (ValueError, TypeError):
+                    use_signal_fallback = True
+
+            if use_signal_fallback:
+                new_candles = df[df["open_time_utc"] > signal_time].sort_values("open_time_utc")
+            else:
+                new_candles = _new_candles_since(df, last_seen_key)
+
+            for _, c in new_candles.iterrows():
+                bars_since_signal = int((c["open_time_utc"] - signal_time) / pd.Timedelta(minutes=INTERVAL_MINUTES))
+                if c["low"] <= p["entry1"]:
+                    break  # اترفع بخطوة 3ب أصلاً - هون فقط للإلغاء بسبب انتهاء الوقت
+                elif bars_since_signal > strategy.MAX_BARS_ACTIVE:
+                    del shadow_pending_setups[sym]
+                    break
+        except Exception as e:
+            print(f"  [تحذير] تخطي فحص shadow setup معلّق {sym} بسبب خطأ: {e}")
+            continue
+
     # ---------- 4) فحص إشارات BOS+OB جديدة (بس على رموز خالية من setup حاليًا) ----------
+    # ملاحظة مهمة: الحقيقي والظل ممكن يختلفوا بأي رمز معطى (مثلاً الظل فاضي من setup
+    # بينما الحقيقي مشغول فيه بسبب قيد التزامن، أو العكس) - فمنفحص كل مسار بشرطه المستقل
+    # الخاص فيه، مش شرط واحد موحّد، وإلا رح تنحرم إشارة عن مسار خالي بس لأنه المسار التاني مشغول.
     for sym, df in data.items():
-        if sym in open_positions or sym in pending_setups:
+        real_busy = sym in open_positions or sym in pending_setups
+        shadow_busy = sym in shadow_open_positions or sym in shadow_pending_setups
+        if real_busy and shadow_busy:
             continue
         try:
             last_seen = state["last_candle_seen"].get(sym)
@@ -534,12 +753,24 @@ def _run_cycle(state, symbols):
                 continue
 
             sig = strategy.check_new_signal(df)
-            if sig:
+            if not sig:
+                continue
+
+            if not real_busy:
                 pending_setups[sym] = {
                     "signal_time": str(sig["signal_time"]),
                     "entry1": sig["entry1"], "sl": sig["sl"], "tp": sig["tp"],
                     "score": sig["score"],
                 }
+            if not shadow_busy:
+                # نفس الإشارة بالضبط تتغذى لمسار الظل كمان - بدون إعادة حساب strategy.check_new_signal
+                shadow_pending_setups[sym] = {
+                    "signal_time": str(sig["signal_time"]),
+                    "entry1": sig["entry1"], "sl": sig["sl"], "tp": sig["tp"],
+                    "score": sig["score"],
+                }
+
+            if not real_busy:
                 time_str = pd.Timestamp(sig["signal_time"]).strftime("%d/%m/%Y %H:%M")
                 push(
                     f"⚡ Scalping Talal Bot ⚡\n"
@@ -638,6 +869,42 @@ def _close_position(state, sym, pos, exit_price, exit_reason, exit_time):
         "exit_reason": exit_reason,
         "score": pos.get("score", ""),
         "balance_after": round(state["balance"], 2),
+    })
+
+
+def _close_shadow_position(state, sym, pos, exit_price, exit_reason, exit_time):
+    """نفس حساب _close_position بالضبط (PnL، رصيد، إحصائيات) بس على المسار الموازي
+    shadow_* - بدون إرسال تلجرام وبدون تسجيل بـsignal_history أو trades_log.csv الحقيقي."""
+    round_trip_cost = strategy.ROUND_TRIP_COST_PCT
+    pnl_pct = (exit_price - pos["entry_price"]) / pos["entry_price"] * 100 - round_trip_cost
+
+    position_dollars = pos.get("position_dollars")
+    if position_dollars is None:
+        position_dollars = state["shadow_balance"] * strategy.POSITION_SIZE_PCT
+    pnl_dollars = position_dollars * pnl_pct / 100
+    state["shadow_balance"] = state.get("shadow_balance", STARTING_BALANCE) + pnl_dollars
+
+    s = state["shadow_stats"]
+    s["total_trades"] += 1
+    if pnl_dollars > 0:
+        s["wins"] += 1
+        s["gross_profit"] += pnl_dollars
+    else:
+        s["losses"] += 1
+        s["gross_loss"] += abs(pnl_dollars)
+
+    append_shadow_trade_log({
+        "pair": sym,
+        "signal_time": pos["signal_time"],
+        "entry_price": pos["entry_price"],
+        "exit_time": str(exit_time),
+        "exit_price": exit_price,
+        "pnl_pct_net": round(pnl_pct, 4),
+        "pnl_dollars": round(pnl_dollars, 2),
+        "position_dollars": round(position_dollars, 2),
+        "exit_reason": exit_reason,
+        "score": pos.get("score", ""),
+        "shadow_balance_after": round(state["shadow_balance"], 2),
     })
 
 
