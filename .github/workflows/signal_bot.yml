@@ -1,7 +1,7 @@
 name: Trading Signal Bot
 
 on:
-  workflow_dispatch: {}   # التشغيل الآن فقط عبر استدعاء خارجي (cron-job.org) أو يدويًا من تبويب Actions
+  workflow_dispatch: {}
 
 permissions:
   contents: write
@@ -41,10 +41,8 @@ jobs:
           git config --global user.name "signal-bot"
           git config --global user.email "signal-bot@users.noreply.github.com"
 
-          # إضافة ملفات الحالة والسجلات
           git add state.json trades_log.csv shadow_trades_log.csv
 
-          # إذا كان هناك تغييرات، اعمل commit
           if ! git diff --staged --quiet; then
             git commit -m "تحديث حالة البوت [skip ci]"
           else
@@ -52,11 +50,6 @@ jobs:
             exit 0
           fi
 
-          # جلب آخر تحديثات من GitHub
           git fetch origin main
-
-          # إعادة تطبيق الـ commit المحلي فوق آخر نسخة من main
           git rebase origin/main
-
-          # رفع التغييرات إلى GitHub
           git push origin HEAD:main
