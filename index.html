@@ -140,6 +140,19 @@
     direction: ltr; text-align: right;
   }
 
+  /* ---------- Shadow stats (بدون حد على عدد الصفقات المتزامنة) ---------- */
+  .shadow-note{
+    font-size: 11px;
+    color: var(--text-faint);
+    margin-bottom: 10px;
+    line-height: 1.5;
+  }
+  .shadow-grid{ margin-bottom: 22px; }
+  .shadow-card{
+    border-color: rgba(167, 139, 250, 0.25);
+  }
+  .shadow-card .stat-label{ color: #a78bfa; }
+
   /* ---------- Section headers ---------- */
   .section-title{
     display:flex; align-items:center; gap:8px;
@@ -397,6 +410,7 @@ const INITIAL_CAPITAL = 10000;
 const REPO_RAW = "https://raw.githubusercontent.com/tlal1000666-ux/scalpingtalalbot/main";
 const STATE_URL = REPO_RAW + "/state.json?_=" + Date.now();
 const TRADES_URL = REPO_RAW + "/trades_log.csv?_=" + Date.now();
+const SHADOW_TRADES_URL = REPO_RAW + "/shadow_trades_log.csv?_=" + Date.now();
 
 const app = document.getElementById('app');
 
@@ -490,6 +504,13 @@ function parseCSV(text){
   return rows.reverse(); // most recent first
 }
 
+// shadow_trades_log.csv بنفس بنية الأعمدة تمامًا زي trades_log.csv (المسار الموازي بدون حد
+// على عدد الصفقات المتزامنة) - فقط اسم آخر عمود مختلف (shadow_balance_after بدل balance_after)،
+// وهذا مو مستخدم هون أصلًا لأنه القراءة بالفهرس الرقمي مش بالاسم.
+function parseShadowCSV(text){
+  return parseCSV(text);
+}
+
 function reasonKey(reason){
   const r = (reason||'').toLowerCase();
   if(r.includes('tp')) return 'tp';
@@ -507,14 +528,18 @@ function reasonLabelAr(key){
 
 async function load(){
   try{
-    const [stateRes, tradesRes] = await Promise.allSettled([
+    const [stateRes, tradesRes, shadowTradesRes] = await Promise.allSettled([
       fetch(STATE_URL).then(r => { if(!r.ok) throw new Error('state'); return r.json(); }),
-      fetch(TRADES_URL).then(r => { if(!r.ok) throw new Error('trades'); return r.text(); })
+      fetch(TRADES_URL).then(r => { if(!r.ok) throw new Error('trades'); return r.text(); }),
+      fetch(SHADOW_TRADES_URL).then(r => { if(!r.ok) throw new Error('shadow_trades'); return r.text(); })
     ]);
 
     const state = stateRes.status === 'fulfilled' ? stateRes.value : null;
     const tradesText = tradesRes.status === 'fulfilled' ? tradesRes.value : '';
     const trades = tradesText ? parseCSV(tradesText) : [];
+    // شادو: لو الملف لسا مش موجود بالمستودع (أول تشغيل)، منكمل بقائمة فاضية بدون ما نكسر الصفحة
+    const shadowTradesText = shadowTradesRes.status === 'fulfilled' ? shadowTradesRes.value : '';
+    const shadowTrades = shadowTradesText ? parseShadowCSV(shadowTradesText) : [];
 
     let livePrices = {};
     if(state && state.open_positions){
@@ -522,14 +547,15 @@ async function load(){
       if(openSyms.length) livePrices = await fetchBinancePrices(openSyms);
     }
 
-    render(state, trades, livePrices);
+    render(state, trades, livePrices, shadowTrades);
   }catch(err){
     app.innerHTML = `<div class="error-box">تعذّر تحميل البيانات.<br>${esc(err.message||'')}</div>`;
   }
 }
 
-function render(state, trades, livePrices){
+function render(state, trades, livePrices, shadowTrades){
   livePrices = livePrices || {};
+  shadowTrades = shadowTrades || [];
   const openPositions = state && state.open_positions ? state.open_positions : {};
   const openSymbols = Object.keys(openPositions);
 
@@ -542,6 +568,17 @@ function render(state, trades, livePrices){
   const totalPnl = closed.reduce((s,t) => s + (isNaN(t.pnl_dollars)?0:t.pnl_dollars), 0);
   const lastBalance = closed.length ? closed[0].balance : null;
   const roiPct = (totalPnl / INITIAL_CAPITAL) * 100;
+
+  // ---- إحصائيات مسار الظل (بدون حد على عدد الصفقات المتزامنة) - نفس منطق الحقيقي بالضبط ----
+  const shadowClosed = shadowTrades.filter(t => !isNaN(t.pnl_dollars));
+  const shadowWins = shadowClosed.filter(t => t.pnl_dollars > 0);
+  const shadowLosses = shadowClosed.filter(t => t.pnl_dollars <= 0);
+  const shadowWinRate = shadowClosed.length ? (shadowWins.length / shadowClosed.length * 100) : 0;
+  const shadowTotalPnl = shadowClosed.reduce((s,t) => s + (isNaN(t.pnl_dollars)?0:t.pnl_dollars), 0);
+  const shadowRoiPct = (shadowTotalPnl / INITIAL_CAPITAL) * 100;
+  const shadowOpenCount = state && state.shadow_open_positions ? Object.keys(state.shadow_open_positions).length : 0;
+  const shadowPendingCount = state && state.shadow_pending_setups ? Object.keys(state.shadow_pending_setups).length : 0;
+  const shadowBalance = state && state.shadow_balance != null ? state.shadow_balance : (INITIAL_CAPITAL + shadowTotalPnl);
 
   // ---- floating (unrealized) PnL for open positions, using live Binance prices ----
   let floatingPnl = 0;
@@ -750,6 +787,34 @@ function render(state, trades, livePrices){
 
     <div class="section-title">الصفقات المفتوحة <span class="count">${openSymbols.length}</span></div>
     ${posHtml}
+
+    <div class="section-title">
+      إحصائيات بدون حد
+      <span class="count">Shadow</span>
+    </div>
+    <div class="shadow-note">لو ما فيه حد على عدد الصفقات المتزامنة - يتحدّث تلقائيًا، وما يأثر على الأرقام الحقيقية فوق</div>
+    <div class="stats-grid shadow-grid">
+      <div class="stat-card shadow-card">
+        <div class="stat-label">صفقات مفتوحة (بدون حد)</div>
+        <div class="stat-value">${shadowOpenCount}</div>
+        <div class="stat-sub">معلّقة: ${shadowPendingCount}</div>
+      </div>
+      <div class="stat-card shadow-card">
+        <div class="stat-label">معدل النجاح</div>
+        <div class="stat-value">${shadowClosed.length ? shadowWinRate.toFixed(1)+'%' : '--'}</div>
+        <div class="stat-sub">${shadowWins.length} رابحة / ${shadowLosses.length} خاسرة</div>
+      </div>
+      <div class="stat-card shadow-card">
+        <div class="stat-label">صافي الربح/الخسارة</div>
+        <div class="stat-value ${shadowTotalPnl>=0?'pos':'neg'}">${shadowTotalPnl>=0?'+':''}${fmtNum(shadowTotalPnl,2)}$</div>
+        <div class="stat-sub">${shadowClosed.length} صفقة مغلقة</div>
+      </div>
+      <div class="stat-card shadow-card">
+        <div class="stat-label">نسبة التغير على رأس المال</div>
+        <div class="stat-value ${shadowRoiPct>=0?'pos':'neg'}">${shadowRoiPct>=0?'+':''}${fmtNum(shadowRoiPct,2)}%</div>
+        <div class="stat-sub">الرصيد الافتراضي: ${fmtNum(shadowBalance,2)}$</div>
+      </div>
+    </div>
 
     <div class="section-title">الصفقات المعلقة <span class="count">${pendingSymbols.length}</span></div>
     ${pendingHtml}
