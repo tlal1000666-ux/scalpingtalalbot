@@ -322,6 +322,41 @@ def handle_help(chat_id):
     reply(chat_id, msg)
 
 
+def _check_exit_with_trail(pos, candle, bars_since_signal):
+    """يفحص شمعة واحدة لصفقة مفتوحة: SL/TP الكاملين، قفل الربح التتبعي (Trailing Lock)،
+    والوقف الزمني. يرجع (exit_price, exit_reason, armed_updated) - armed_updated لازم
+    يُحفظ برجوعه بـpos['armed'] حتى لو ما صار إغلاق، عشان الحالة تستمر للدورة الجاية.
+    نفس المنطق بالضبط المستخدم بمحرك الباكتست (resolve_setup) لضمان عدم وجود فروقات."""
+    sl, tp = pos["sl"], pos["tp"]
+    armed = pos.get("armed", False)
+    trail_arm_price = pos["entry_price"] + (tp - pos["entry_price"]) * strategy.TRAIL_ARM_PCT
+    trail_exit_price = pos["entry_price"] + (tp - pos["entry_price"]) * strategy.TRAIL_EXIT_PCT
+
+    if candle["high"] >= trail_arm_price:
+        armed = True
+
+    hit_sl = candle["low"] <= sl
+    hit_tp = candle["high"] >= tp
+
+    if hit_sl and hit_tp:
+        order = _resolve_conflict_order(pos.get("_sym", ""), candle["open_time_utc"], sl, tp)
+        if order == "TP":
+            return tp, "TP 🟢", armed
+        return sl, "SL 🔴", armed
+    if hit_sl:
+        return sl, "SL 🔴", armed
+    if hit_tp:
+        return tp, "TP 🟢", armed
+
+    if armed and candle["low"] <= trail_exit_price:
+        return trail_exit_price, "Trail-Lock 🔒", armed
+
+    if bars_since_signal > strategy.MAX_BARS_ACTIVE:
+        return candle["close"], "Timeout ⏱️", armed
+
+    return None, None, armed
+
+
 def _resolve_conflict_order(symbol, candle_open_time, sl, tp):
     """يستخدم فقط لما شمعة 30m توحدة تلمس SL وTP الاثنين (حالة تعارض).
     ينزل لفريم الدقيقة (1m) لنفس نافذة وقت الشمعة عشان يعرف بالضبط أيهم صار أول.
@@ -459,23 +494,8 @@ def _run_cycle(state, symbols):
             for _, last in new_candles.iterrows():
                 bars_since_signal = int((last["open_time_utc"] - signal_time) / pd.Timedelta(minutes=INTERVAL_MINUTES))
 
-                hit_sl = last["low"] <= pos["sl"]
-                hit_tp = last["high"] >= pos["tp"]
-
-                exit_price, exit_reason = None, None
-                if hit_sl and hit_tp:
-                    # تعارض: نفس الشمعة لمست SL وTP - ننزل لفريم الدقيقة للتأكد أيهم صار أول
-                    order = _resolve_conflict_order(sym, last["open_time_utc"], pos["sl"], pos["tp"])
-                    if order == "TP":
-                        exit_price, exit_reason = pos["tp"], "TP 🟢"
-                    else:
-                        exit_price, exit_reason = pos["sl"], "SL 🔴"  # fallback محافظ لو ما قدرنا نتأكد
-                elif hit_sl:
-                    exit_price, exit_reason = pos["sl"], "SL 🔴"
-                elif hit_tp:
-                    exit_price, exit_reason = pos["tp"], "TP 🟢"
-                elif bars_since_signal > strategy.MAX_BARS_ACTIVE:
-                    exit_price, exit_reason = last["close"], "Timeout ⏱️"
+                pos["_sym"] = sym
+                exit_price, exit_reason, pos["armed"] = _check_exit_with_trail(pos, last, bars_since_signal)
 
                 if exit_price is not None:
                     _close_position(state, sym, pos, exit_price, exit_reason, last["open_time_utc"])
@@ -605,7 +625,7 @@ def _run_cycle(state, symbols):
             pos = {
                 "signal_time": p["signal_time"], "entry_time": str(entry_time),
                 "entry_price": entry_price, "sl": p["sl"], "tp": p["tp"], "score": p["score"],
-                "position_dollars": position_dollars,
+                "position_dollars": position_dollars, "armed": False,
             }
 
             signal_time_iso = pos["signal_time"]
@@ -623,23 +643,8 @@ def _run_cycle(state, symbols):
             for _, c in remaining.iterrows():
                 bars_since_signal = int((c["open_time_utc"] - signal_time) / pd.Timedelta(minutes=INTERVAL_MINUTES))
 
-                hit_sl = c["low"] <= pos["sl"]
-                hit_tp = c["high"] >= pos["tp"]
-
-                exit_price, exit_reason = None, None
-                if hit_sl and hit_tp:
-                    # تعارض: نفس الشمعة لمست SL وTP - ننزل لفريم الدقيقة للتأكد أيهم صار أول
-                    order = _resolve_conflict_order(sym, c["open_time_utc"], pos["sl"], pos["tp"])
-                    if order == "TP":
-                        exit_price, exit_reason = pos["tp"], "TP 🟢"
-                    else:
-                        exit_price, exit_reason = pos["sl"], "SL 🔴"  # fallback محافظ لو ما قدرنا نتأكد
-                elif hit_sl:
-                    exit_price, exit_reason = pos["sl"], "SL 🔴"
-                elif hit_tp:
-                    exit_price, exit_reason = pos["tp"], "TP 🟢"
-                elif bars_since_signal > strategy.MAX_BARS_ACTIVE:
-                    exit_price, exit_reason = c["close"], "Timeout ⏱️"
+                pos["_sym"] = sym
+                exit_price, exit_reason, pos["armed"] = _check_exit_with_trail(pos, c, bars_since_signal)
 
                 if exit_price is not None:
                     _close_position(state, sym, pos, exit_price, exit_reason, c["open_time_utc"])
@@ -663,7 +668,7 @@ def _run_cycle(state, symbols):
             pos = {
                 "signal_time": p["signal_time"], "entry_time": str(entry_time),
                 "entry_price": entry_price, "sl": p["sl"], "tp": p["tp"], "score": p["score"],
-                "position_dollars": position_dollars,
+                "position_dollars": position_dollars, "armed": False,
             }
 
             signal_time = pd.Timestamp(pos["signal_time"])
@@ -671,22 +676,8 @@ def _run_cycle(state, symbols):
             for _, c in remaining.iterrows():
                 bars_since_signal = int((c["open_time_utc"] - signal_time) / pd.Timedelta(minutes=INTERVAL_MINUTES))
 
-                hit_sl = c["low"] <= pos["sl"]
-                hit_tp = c["high"] >= pos["tp"]
-
-                exit_price, exit_reason = None, None
-                if hit_sl and hit_tp:
-                    order = _resolve_conflict_order(sym, c["open_time_utc"], pos["sl"], pos["tp"])
-                    if order == "TP":
-                        exit_price, exit_reason = pos["tp"], "TP 🟢"
-                    else:
-                        exit_price, exit_reason = pos["sl"], "SL 🔴"
-                elif hit_sl:
-                    exit_price, exit_reason = pos["sl"], "SL 🔴"
-                elif hit_tp:
-                    exit_price, exit_reason = pos["tp"], "TP 🟢"
-                elif bars_since_signal > strategy.MAX_BARS_ACTIVE:
-                    exit_price, exit_reason = c["close"], "Timeout ⏱️"
+                pos["_sym"] = sym
+                exit_price, exit_reason, pos["armed"] = _check_exit_with_trail(pos, c, bars_since_signal)
 
                 if exit_price is not None:
                     _close_shadow_position(state, sym, pos, exit_price, exit_reason, c["open_time_utc"])
