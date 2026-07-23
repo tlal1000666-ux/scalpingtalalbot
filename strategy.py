@@ -32,6 +32,10 @@ ATR_MULT_TP = 1.0             # TP = entry1 + ATR_MULT_TP × ATR
 MIN_TARGET_PCT = 1.5          # أقل مسافة هدف مسموحة (%) - فوق منطق ATR
 MIN_STOP_PCT = 1.0            # أقل مسافة ستوب مسموحة (%) - فوق منطق ATR
 MIN_SCORE_THRESHOLD = 0.80     # أقل قوة إشارة (Score) مقبولة - فلتر صريح بمعزل عن أي انتقاء تزامن
+MIN_ATR_PCT_AT_ENTRY_STRICT = 1.06  # فلتر جودة إضافي: نسبة ATR عند سعر الدخول لازم تكون أعلى من هيك
+                                     # (تحليل بيّن علاقة تصاعدية قوية: كل ما ATR% عند الدخول أعلى، Win Rate أعلى)
+EXCLUDED_SIGNAL_HOURS_UTC = {0, 1, 2, 3, 4}  # فلتر جودة إضافي: استبعاد إشارات هالساعات (UTC)
+                                              # تحليل بيّن Win Rate أضعف بوضوح بهالنافذة الزمنية (59.4% مقابل 64.8%)
 
 COMMISSION_PCT_PER_SIDE = 0.10
 SLIPPAGE_PCT_PER_SIDE = 0.05   # سليباج 0.05% لكل جهة (دخول وخروج)
@@ -80,10 +84,12 @@ def compute_all_indicators(g: pd.DataFrame) -> pd.DataFrame:
     return g
 
 
-def _evaluate_signal_at(i, high, low, close, open_, atr, atr_pct, last_swing_high):
+def _evaluate_signal_at(i, high, low, close, open_, atr, atr_pct, last_swing_high, signal_hour_utc=None):
     """نواة الفحص المشتركة: تفحص شمعة i بحثًا عن إشارة BOS+OB.
     يستخدمها check_new_signal (للبوت الحي، i=آخر شمعة) ومحرك الباكتست (لكل i بالتاريخ)
     بنفس المنطق بالضبط - منعًا لتكرار المنطق وحصول فروقات بين الحي والباكتست."""
+    if signal_hour_utc is not None and signal_hour_utc in EXCLUDED_SIGNAL_HOURS_UTC:
+        return None
     if np.isnan(last_swing_high[i]) or np.isnan(atr[i]):
         return None
 
@@ -117,6 +123,8 @@ def _evaluate_signal_at(i, high, low, close, open_, atr, atr_pct, last_swing_hig
     # لازم يضل ضمن نفس نطاق الفلتر، لأنه ATR% من close[i] ممكن يختلف كثير عن ATR% من entry1
     atr_pct_at_entry = atr[i] / entry1 * 100
     if not (MIN_ATR_PCT <= atr_pct_at_entry <= MAX_ATR_PCT):
+        return None
+    if atr_pct_at_entry < MIN_ATR_PCT_AT_ENTRY_STRICT:
         return None
 
     # ------ SL/TP مبنيين على ATR بدل مدى الـ Order Block ------
@@ -174,7 +182,8 @@ def check_new_signal(g: pd.DataFrame):
     atr_pct = g["atr_pct"].values
     last_swing_high = g["last_swing_high"].values
 
-    result = _evaluate_signal_at(i, high, low, close, open_, atr, atr_pct, last_swing_high)
+    signal_hour_utc = pd.Timestamp(g["open_time_utc"].iloc[i]).hour
+    result = _evaluate_signal_at(i, high, low, close, open_, atr, atr_pct, last_swing_high, signal_hour_utc)
     if result is None:
         return None
 
