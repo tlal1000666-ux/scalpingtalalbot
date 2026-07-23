@@ -537,5 +537,15 @@
       "tp": 0.0020622403095532276,
       "score": 0.8351642318138244
     }
+  },
+  "shadow_pending_setups": {},
+  "shadow_open_positions": {},
+  "shadow_balance": 10000.0,
+  "shadow_stats": {
+    "total_trades": 0,
+    "wins": 0,
+    "losses": 0,
+    "gross_profit": 0.0,
+    "gross_loss": 0.0
   }
 }
