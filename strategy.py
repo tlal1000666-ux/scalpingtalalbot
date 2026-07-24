@@ -23,6 +23,8 @@ OB_LOOKBACK = 20
 ATR_LEN = 14
 MIN_ATR_PCT = 0.5
 MAX_ATR_PCT = 5.0
+VOLUME_MA_LEN = 20
+MIN_VOLUME_RATIO = 0.0  # ملغي (بطلب: بلا فلاتر، بس الإدارة/القفل التتبعي فعّال) - كان 0.80
 MIN_PULLBACK_PCT = 0.30       # أقل نسبة تراجع مطلوبة قبل الدخول (كانت 0.10 - ضعيفة جدًا كفلتر)
 MAX_BARS_ACTIVE = 24          # أقصى عمر للـ setup كامل (من لحظة الإشارة، معلّق أو مفتوح)
 
@@ -31,13 +33,13 @@ ATR_MULT_SL = 1.0             # SL = entry1 - ATR_MULT_SL × ATR
 ATR_MULT_TP = 1.0             # TP = entry1 + ATR_MULT_TP × ATR
 MIN_TARGET_PCT = 1.5          # أقل مسافة هدف مسموحة (%) - فوق منطق ATR
 MIN_STOP_PCT = 1.0            # أقل مسافة ستوب مسموحة (%) - فوق منطق ATR
-MIN_SCORE_THRESHOLD = 0.80     # أقل قوة إشارة (Score) مقبولة - فلتر صريح بمعزل عن أي انتقاء تزامن
-MIN_ATR_PCT_AT_ENTRY_STRICT = 0.0   # معطّل حاليًا (بطلب: فلتر السكور الأول بس) - كان 1.06
-EXCLUDED_SIGNAL_HOURS_UTC = set()  # معطّل حاليًا (بطلب: فلتر السكور الأول بس) - كان {0,1,2,3,4}
+MIN_SCORE_THRESHOLD = 0.0      # ملغي: لا يوجد فلتر Score 0.80
+MIN_ATR_PCT_AT_ENTRY_STRICT = 0.0   # ملغي: لا يوجد فلتر ATR إضافي عند الدخول
+EXCLUDED_SIGNAL_HOURS_UTC = set()  # ملغي: لا يوجد استبعاد لساعات معينة
 
 # --- قفل الربح التتبعي (Trailing Profit Lock) ---
-TRAIL_ARM_PCT = 0.95   # لو السعر وصل 95% من المسافة لسعر الهدف، يتفعّل "التسليح"
-TRAIL_EXIT_PCT = 0.90  # بعد التفعيل، لو السعر رجع لـ90% من المسافة، تُقفل الصفقة فورًا بدل انتظار TP الكامل أو الرجوع لـSL
+TRAIL_ARM_PCT = 0.95   # إذا وصل السعر 95% من المسافة إلى الهدف يتم تفعيل قفل الربح
+TRAIL_EXIT_PCT = 0.90  # بعد التفعيل، إذا رجع السعر إلى 90% من المسافة إلى الهدف يتم البيع
 
 COMMISSION_PCT_PER_SIDE = 0.10
 SLIPPAGE_PCT_PER_SIDE = 0.05   # سليباج 0.05% لكل جهة (دخول وخروج)
@@ -45,8 +47,9 @@ ROUND_TRIP_COST_PCT = (COMMISSION_PCT_PER_SIDE + SLIPPAGE_PCT_PER_SIDE) * 2  # 0
 NET_TARGET_MIN_PCT = 1.0       # أقل هدف صافي مقبول (%) بعد خصم كل التكاليف
 
 # --- إدارة المحفظة (لغرض التوصية فقط) ---
-POSITION_SIZE_PCT = 1 / 3     # نسبة من الرصيد الحالي - بدون سقف دولار، بتكبر مع الرصيد
+POSITION_SIZE_PCT = 1 / 3   # 33.3% من الرصيد لكل صفقة
 MAX_CONCURRENT_TRADES = 3
+MONTHLY_TRADE_CAP = 150  # حد أقصى للصفقات الشهرية
 
 # --- إدارة مخاطرة إضافية ---
 SYMBOL_COOLDOWN_HOURS = 12        # منع الدخول على نفس الرمز 12 ساعة بعد أي SL
@@ -83,10 +86,16 @@ def compute_all_indicators(g: pd.DataFrame) -> pd.DataFrame:
         last_swing_high[i] = current_val
     g["last_swing_high"] = last_swing_high
 
+    if "volume" in g.columns:
+        g["volume_ma"] = g["volume"].rolling(VOLUME_MA_LEN, min_periods=VOLUME_MA_LEN).mean()
+        g["volume_ratio"] = g["volume"] / g["volume_ma"]
+    else:
+        g["volume_ratio"] = 1.0
+
     return g
 
 
-def _evaluate_signal_at(i, high, low, close, open_, atr, atr_pct, last_swing_high, signal_hour_utc=None):
+def _evaluate_signal_at(i, high, low, close, open_, atr, atr_pct, last_swing_high, signal_hour_utc=None, volume_ratio=None):
     """نواة الفحص المشتركة: تفحص شمعة i بحثًا عن إشارة BOS+OB.
     يستخدمها check_new_signal (للبوت الحي، i=آخر شمعة) ومحرك الباكتست (لكل i بالتاريخ)
     بنفس المنطق بالضبط - منعًا لتكرار المنطق وحصول فروقات بين الحي والباكتست."""
@@ -105,6 +114,12 @@ def _evaluate_signal_at(i, high, low, close, open_, atr, atr_pct, last_swing_hig
     atr_ok = MIN_ATR_PCT <= atr_pct[i] <= MAX_ATR_PCT
     if not atr_ok:
         return None
+
+    # فلتر الحجم: لا نقبل الإشارة إلا إذا حجم الشمعة أعلى من متوسط الحجم
+    if volume_ratio is not None:
+        vr = volume_ratio[i]
+        if np.isnan(vr) or vr < MIN_VOLUME_RATIO:
+            return None
 
     ob_index = None
     for k in range(1, OB_LOOKBACK + 1):
@@ -183,9 +198,10 @@ def check_new_signal(g: pd.DataFrame):
     atr = g["atr"].values
     atr_pct = g["atr_pct"].values
     last_swing_high = g["last_swing_high"].values
+    volume_ratio = g["volume_ratio"].values if "volume_ratio" in g.columns else None
 
     signal_hour_utc = pd.Timestamp(g["open_time_utc"].iloc[i]).hour
-    result = _evaluate_signal_at(i, high, low, close, open_, atr, atr_pct, last_swing_high, signal_hour_utc)
+    result = _evaluate_signal_at(i, high, low, close, open_, atr, atr_pct, last_swing_high, signal_hour_utc, volume_ratio)
     if result is None:
         return None
 
