@@ -409,9 +409,11 @@ const INITIAL_CAPITAL = 10000;
 // مسارات نسبية (نفس مجلد الصفحة على GitHub Pages) - بهيك المتصفح ما يطلب من
 // raw.githubusercontent.com ولا يكشف اسم المستودع أو الحساب لأي زائر للموقع.
 // هذا شغال حتى لو المستودع نفسه Private، لأن GitHub Pages بيضل يعرض الموقع للعموم.
-const STATE_URL = "./state.json?_=" + Date.now();
-const TRADES_URL = "./trades_log.csv?_=" + Date.now();
-const SHADOW_TRADES_URL = "./shadow_trades_log.csv?_=" + Date.now();
+// ملاحظة: لازم تكون دوال (مو ثوابت) عشان الـ timestamp يتجدد كل مرة نجيب فيها البيانات
+// من جديد - وإلا نفس الرابط بيتكرر والمتصفح ممكن يرجّع نسخة مخزّنة (cache) قديمة.
+function STATE_URL(){ return "./state.json?_=" + Date.now(); }
+function TRADES_URL(){ return "./trades_log.csv?_=" + Date.now(); }
+function SHADOW_TRADES_URL(){ return "./shadow_trades_log.csv?_=" + Date.now(); }
 
 const app = document.getElementById('app');
 
@@ -530,9 +532,9 @@ function reasonLabelAr(key){
 async function load(){
   try{
     const [stateRes, tradesRes, shadowTradesRes] = await Promise.allSettled([
-      fetch(STATE_URL).then(r => { if(!r.ok) throw new Error('state'); return r.json(); }),
-      fetch(TRADES_URL).then(r => { if(!r.ok) throw new Error('trades'); return r.text(); }),
-      fetch(SHADOW_TRADES_URL).then(r => { if(!r.ok) throw new Error('shadow_trades'); return r.text(); })
+      fetch(STATE_URL()).then(r => { if(!r.ok) throw new Error('state'); return r.json(); }),
+      fetch(TRADES_URL()).then(r => { if(!r.ok) throw new Error('trades'); return r.text(); }),
+      fetch(SHADOW_TRADES_URL()).then(r => { if(!r.ok) throw new Error('shadow_trades'); return r.text(); })
     ]);
 
     const state = stateRes.status === 'fulfilled' ? stateRes.value : null;
@@ -839,7 +841,33 @@ function render(state, trades, livePrices, shadowTrades){
   });
 }
 
+// ---- تحديث حي تلقائي بينما الصفحة مفتوحة ----
+// كل REFRESH_MS نعيد الجلب والعرض. لو التبويب مو ظاهر (المستخدم بتبويب/تطبيق تاني)
+// نوقف التحديث مؤقتًا لتوفير الطلبات، ونرجع نجيب فورًا لحظة ما يرجع يفتح الصفحة.
+const REFRESH_MS = 20000; // 20 ثانية - عدّلها لو بدك أسرع/أبطأ
+let refreshTimer = null;
+
+function startAutoRefresh(){
+  if(refreshTimer) return;
+  refreshTimer = setInterval(load, REFRESH_MS);
+}
+function stopAutoRefresh(){
+  if(!refreshTimer) return;
+  clearInterval(refreshTimer);
+  refreshTimer = null;
+}
+
+document.addEventListener('visibilitychange', () => {
+  if(document.hidden){
+    stopAutoRefresh();
+  }else{
+    load();          // تحديث فوري لحظة الرجوع للتبويب (بدل ما نستنى دورة كاملة)
+    startAutoRefresh();
+  }
+});
+
 load();
+startAutoRefresh();
 </script>
 
 </body>
