@@ -1,874 +1,1539 @@
-<!DOCTYPE html>
-<html lang="ar" dir="rtl">
+<!doctype html>
+<html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Scalping Talal Bot — لوحة المراقبة</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
-<style>
-  :root{
-    --bg: #0b0f0e;
-    --bg-panel: #101614;
-    --bg-panel-raised: #151d1a;
-    --line: #223028;
-    --line-soft: #1a2420;
-    --text: #e7f2ec;
-    --text-dim: #7d938a;
-    --text-faint: #4d5f57;
-    --green: #3ddc84;
-    --green-dim: #1f4a37;
-    --red: #ff5c5c;
-    --red-dim: #4a2323;
-    --amber: #e8b34d;
-    --amber-dim: #4a3d1f;
-    --mono: 'JetBrains Mono', ui-monospace, monospace;
-    --sans: 'IBM Plex Sans Arabic', 'Inter', sans-serif;
-  }
-  *{box-sizing:border-box; margin:0; padding:0;}
-  html,body{background:var(--bg); color:var(--text); font-family:var(--sans); min-height:100vh;}
-  body{
-    background-image:
-      radial-gradient(circle at 15% 0%, rgba(61,220,132,0.05), transparent 40%),
-      radial-gradient(circle at 85% 100%, rgba(232,179,77,0.04), transparent 40%);
-    padding: 18px 14px 60px;
-  }
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Scalping Talal Bot · Trading Terminal</title>
 
-  /* ---------- Header ---------- */
-  header{
-    display:flex; align-items:center; justify-content:space-between;
-    margin-bottom: 18px;
-    padding-bottom: 16px;
-    border-bottom: 1px solid var(--line);
-  }
-  .brand{ display:flex; flex-direction:column; gap:3px; }
-  .brand-title{
-    font-family: var(--mono);
-    font-size: 18px;
-    font-weight: 700;
-    letter-spacing: 0.5px;
-    color: var(--text);
-    direction: ltr; text-align: right;
-  }
-  .brand-sub{
-    font-size: 11px;
-    color: var(--text-faint);
-    direction: ltr; text-align: right;
-    font-family: var(--mono);
-  }
-  .live-pill{
-    display:flex; align-items:center; gap:6px;
-    font-family: var(--mono);
-    font-size: 11px;
-    color: var(--green);
-    background: var(--green-dim);
-    border: 1px solid rgba(61,220,132,0.3);
-    padding: 5px 10px;
-    border-radius: 20px;
-    white-space:nowrap;
-  }
-  .live-dot{
-    width:6px; height:6px; border-radius:50%;
-    background: var(--green);
-    box-shadow: 0 0 8px var(--green);
-    animation: pulse 1.6s ease-in-out infinite;
-  }
-  @keyframes pulse{ 0%,100%{opacity:1;} 50%{opacity:0.35;} }
+    <!-- ==================== ALL CSS ==================== -->
+    <style>
+        /* ----- Tailwind base + custom theme (from index.css) ----- */
+        @import "tailwindcss";
 
-  /* ---------- Heartbeat strip (signature element) ---------- */
-  .heartbeat-section{ margin-bottom: 20px; }
-  .heartbeat-label{
-    font-family: var(--mono);
-    font-size: 10.5px;
-    color: var(--text-faint);
-    text-transform: uppercase;
-    letter-spacing: 1.5px;
-    margin-bottom: 8px;
-    direction: ltr; text-align: right;
-  }
-  .heartbeat-strip{
-    display:flex; gap:4px;
-    overflow-x:auto;
-    padding: 12px 10px;
-    background: var(--bg-panel);
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    -webkit-overflow-scrolling: touch;
-  }
-  .hb-dot{
-    flex: 0 0 auto;
-    width: 9px; height: 28px;
-    border-radius: 3px;
-    position: relative;
-  }
-  .hb-dot.tp{ background: var(--green); box-shadow: 0 0 6px rgba(61,220,132,0.5); }
-  .hb-dot.sl{ background: var(--red); box-shadow: 0 0 6px rgba(255,92,92,0.4); }
-  .hb-dot.timeout{ background: var(--amber); opacity: 0.75; }
-  .hb-dot.open{ background: transparent; border: 1.5px dashed var(--text-dim); animation: pulse 1.6s ease-in-out infinite; }
+        @theme {
+            --font-mono: "JetBrains Mono", ui-monospace, monospace;
+            --font-sans: "Inter", "IBM Plex Sans Arabic", sans-serif;
 
-  /* ---------- Stat cards ---------- */
-  .stats-grid{
-    display:grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 10px;
-    margin-bottom: 22px;
-  }
-  .stat-card{
-    background: var(--bg-panel);
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    padding: 13px 14px;
-  }
-  .stat-label{
-    font-size: 11px; color: var(--text-dim);
-    margin-bottom: 6px;
-  }
-  .stat-value{
-    font-family: var(--mono);
-    font-size: 22px;
-    font-weight: 700;
-    direction: ltr; text-align: right;
-    color: var(--text);
-  }
-  .stat-value.pos{ color: var(--green); }
-  .stat-value.neg{ color: var(--red); }
-  .stat-sub{
-    font-family: var(--mono);
-    font-size: 10.5px;
-    color: var(--text-faint);
-    margin-top: 4px;
-    direction: ltr; text-align: right;
-  }
+            --color-bg: #060a09;
+            --color-bg-2: #0a0f0e;
+            --color-panel: #0e1513;
+            --color-panel-2: #121b18;
+            --color-line: #1c2823;
+            --color-line-soft: #16211d;
 
-  /* ---------- Shadow stats (بدون حد على عدد الصفقات المتزامنة) ---------- */
-  .shadow-note{
-    font-size: 11px;
-    color: var(--text-faint);
-    margin-bottom: 10px;
-    line-height: 1.5;
-  }
-  .shadow-grid{ margin-bottom: 22px; }
-  .shadow-card{
-    border-color: rgba(167, 139, 250, 0.25);
-  }
-  .shadow-card .stat-label{ color: #a78bfa; }
+            --color-ink: #e7f2ec;
+            --color-dim: #7d938a;
+            --color-faint: #4d5f57;
 
-  /* ---------- Section headers ---------- */
-  .section-title{
-    display:flex; align-items:center; gap:8px;
-    font-size: 14px; font-weight: 700;
-    margin: 26px 0 10px;
-    color: var(--text);
-  }
-  .section-title .count{
-    font-family: var(--mono);
-    font-size: 11px;
-    color: var(--text-faint);
-    background: var(--bg-panel-raised);
-    border: 1px solid var(--line);
-    padding: 2px 8px;
-    border-radius: 20px;
-  }
+            --color-neon: #3ddc84;
+            --color-neon-dim: #123322;
+            --color-loss: #ff5c5c;
+            --color-loss-dim: #3a1c1c;
+            --color-warn: #f0b849;
+            --color-warn-dim: #3a2f16;
+            --color-info: #5b8def;
+            --color-violet: #a78bfa;
+        }
 
-  /* ---------- Open position cards ---------- */
-  .pos-card{
-    background: var(--bg-panel);
-    border: 1px solid var(--line);
-    border-right: 3px solid var(--amber);
-    border-radius: 10px;
-    padding: 14px 15px;
-    margin-bottom: 10px;
-  }
-  .pos-top{
-    display:flex; justify-content:space-between; align-items:baseline;
-    margin-bottom: 10px;
-  }
-  .pos-symbol{
-    font-family: var(--mono);
-    font-weight: 700;
-    font-size: 15px;
-    color: var(--text);
-  }
-  .pos-badge{
-    font-family: var(--mono);
-    font-size: 10px;
-    color: var(--amber);
-    background: var(--amber-dim);
-    padding: 2px 8px;
-    border-radius: 12px;
-    border: 1px solid rgba(232,179,77,0.3);
-  }
-  .pos-bar-wrap{
-    position: relative;
-    height: 6px;
-    background: var(--line-soft);
-    border-radius: 4px;
-    margin: 10px 0 6px;
-    overflow: visible;
-  }
-  .pos-bar-fill{
-    position:absolute; top:0; bottom:0; left:0;
-    border-radius: 4px;
-    background: linear-gradient(90deg, var(--red), var(--amber) 50%, var(--green));
-  }
-  .pos-bar-marker{
-    position:absolute; top:-4px;
-    width:2px; height:14px;
-    background: var(--text);
-    border-radius: 1px;
-  }
-  .pos-bar-marker.current{
-    background: #ffffff;
-    box-shadow: 0 0 6px rgba(255,255,255,0.7);
-    width:3px; height:18px; top:-6px;
-  }
-  .pos-strategy{
-    font-family: var(--mono);
-    font-size: 10px;
-    color: var(--text-dim);
-    margin-bottom: 6px;
-    direction: ltr; text-align: right;
-  }
-  .pos-range-labels{
-    display:flex; justify-content:space-between;
-    font-family: var(--mono);
-    font-size: 10px;
-    color: var(--text-faint);
-    margin-bottom: 12px;
-    direction: ltr;
-  }
-  .pos-grid{
-    display:grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 8px 12px;
-  }
-  .pos-field{ direction: ltr; text-align: right; }
-  .pos-field-label{ font-size: 10px; color: var(--text-faint); margin-bottom: 2px; }
-  .pos-field-value{ font-family: var(--mono); font-size: 13px; color: var(--text); }
-  .pos-field-value.sl{ color: var(--red); }
-  .pos-field-value.tp{ color: var(--green); }
+        @font-face {
+            font-family: "Inter";
+            font-style: normal;
+            font-weight: 100 900;
+            font-display: swap;
+            src: url("https://fonts.gstatic.com/s/inter/v18/UcCO3FwrK3iLTeHuS_fvQtMwCp50KnMw2boKoduKmMEVuLyfAZ9hiJ-Ek-_EeAmM.woff2") format("woff2");
+        }
 
-  .empty-state{
-    background: var(--bg-panel);
-    border: 1px dashed var(--line);
-    border-radius: 10px;
-    padding: 26px 16px;
-    text-align:center;
-    color: var(--text-faint);
-    font-size: 12.5px;
-  }
+        @font-face {
+            font-family: "JetBrains Mono";
+            font-style: normal;
+            font-weight: 400 700;
+            font-display: swap;
+            src: url("https://fonts.gstatic.com/s/jetbrainsmono/v24/tDba2o-flEEny0FZhsfKu5WU4zr3E_BX0PnT8RD8yKxjPVmUsaaDhw.woff2") format("woff2");
+        }
 
-  /* ---------- Equity curve ---------- */
-  .equity-card{
-    background: var(--bg-panel);
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    padding: 14px 15px 8px;
-    margin-bottom: 10px;
-  }
-  .equity-top{
-    display:flex; justify-content:space-between; align-items:baseline;
-    margin-bottom: 6px;
-  }
-  .equity-value{
-    font-family: var(--mono);
-    font-size: 18px;
-    font-weight: 700;
-  }
-  .equity-value.pos{ color: var(--green); }
-  .equity-value.neg{ color: var(--red); }
-  .equity-sub{
-    font-family: var(--mono);
-    font-size: 10.5px;
-    color: var(--text-faint);
-  }
-  .equity-svg{ width:100%; height: 90px; display:block; }
+        * {
+            box-sizing: border-box;
+        }
 
-  /* ---------- Pending orders ---------- */
-  .pending-card{
-    background: var(--bg-panel);
-    border: 1px solid var(--line);
-    border-right: 3px solid var(--text-dim);
-    border-radius: 10px;
-    padding: 12px 15px;
-    margin-bottom: 10px;
-  }
-  .pending-top{
-    display:flex; justify-content:space-between; align-items:baseline;
-    margin-bottom: 8px;
-  }
-  .pending-symbol{
-    font-family: var(--mono);
-    font-weight: 700;
-    font-size: 14px;
-    color: var(--text);
-  }
-  .pending-badge{
-    font-family: var(--mono);
-    font-size: 10px;
-    color: var(--text-dim);
-    background: var(--bg-panel-raised);
-    padding: 2px 8px;
-    border-radius: 12px;
-    border: 1px solid var(--line);
-  }
-  .pending-grid{
-    display:grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 6px 12px;
-  }
+        html,
+        body,
+        #root {
+            min-height: 100vh;
+            background: var(--color-bg);
+            color: var(--color-ink);
+            font-family: var(--font-sans);
+        }
 
-  /* ---------- Trade history list ---------- */
-  .filter-row{
-    display:flex; gap:6px;
-    margin-bottom: 12px;
-    overflow-x:auto;
-  }
-  .filter-btn{
-    font-family: var(--mono);
-    font-size: 11px;
-    color: var(--text-dim);
-    background: var(--bg-panel);
-    border: 1px solid var(--line);
-    padding: 6px 12px;
-    border-radius: 20px;
-    white-space: nowrap;
-    cursor: pointer;
-  }
-  .filter-btn.active{
-    background: var(--bg-panel-raised);
-    color: var(--text);
-    border-color: var(--text-faint);
-  }
+        body {
+            margin: 0;
+            background-image:
+                radial-gradient(circle at 12% -5%, rgba(61, 220, 132, 0.06), transparent 42%),
+                radial-gradient(circle at 92% 8%, rgba(91, 141, 239, 0.05), transparent 40%),
+                radial-gradient(circle at 80% 100%, rgba(167, 139, 250, 0.04), transparent 45%);
+        }
 
-  .trade-row{
-    display:flex; align-items:center; gap:10px;
-    background: var(--bg-panel);
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    padding: 11px 13px;
-    margin-bottom: 8px;
-  }
-  .trade-icon{
-    flex: 0 0 auto;
-    width: 30px; height: 30px;
-    border-radius: 8px;
-    display:flex; align-items:center; justify-content:center;
-    font-size: 14px;
-  }
-  .trade-icon.tp{ background: var(--green-dim); color: var(--green); }
-  .trade-icon.sl{ background: var(--red-dim); color: var(--red); }
-  .trade-icon.timeout{ background: var(--amber-dim); color: var(--amber); }
-  .trade-mid{ flex: 1 1 auto; min-width:0; }
-  .trade-symbol{ font-family: var(--mono); font-weight:700; font-size: 13.5px; }
-  .trade-time{ font-family: var(--mono); font-size: 10.5px; color: var(--text-faint); margin-top: 2px; direction:ltr; }
-  .trade-right{ flex: 0 0 auto; text-align: left; direction: ltr; }
-  .trade-pnl{ font-family: var(--mono); font-weight: 700; font-size: 14px; }
-  .trade-pnl.pos{ color: var(--green); }
-  .trade-pnl.neg{ color: var(--red); }
-  .trade-pct{ font-family: var(--mono); font-size: 10.5px; color: var(--text-faint); margin-top:2px; }
+        ::-webkit-scrollbar {
+            height: 7px;
+            width: 7px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: var(--color-line);
+            border-radius: 6px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #2a3a33;
+        }
 
-  footer{
-    margin-top: 30px;
-    text-align:center;
-    font-family: var(--mono);
-    font-size: 10.5px;
-    color: var(--text-faint);
-  }
-  footer a{ color: var(--text-dim); }
+        .mono {
+            font-family: var(--font-mono);
+            font-variant-numeric: tabular-nums;
+        }
 
-  .loading, .error-box{
-    text-align:center; padding: 40px 20px; color: var(--text-faint); font-size: 13px;
-  }
-  .error-box{ color: var(--red); }
+        .glass {
+            background: linear-gradient(160deg, rgba(18, 27, 24, 0.9), rgba(10, 15, 14, 0.75));
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--color-line);
+        }
 
-  ::-webkit-scrollbar{ height: 6px; width: 6px; }
-  ::-webkit-scrollbar-thumb{ background: var(--line); border-radius: 4px; }
-</style>
+        .glow-neon {
+            box-shadow: 0 0 0 1px rgba(61, 220, 132, 0.25), 0 0 24px -6px rgba(61, 220, 132, 0.4);
+        }
+
+        .text-glow-neon {
+            text-shadow: 0 0 14px rgba(61, 220, 132, 0.45);
+        }
+
+        @keyframes pulse-dot {
+            0%,
+            100% {
+                opacity: 1;
+                transform: scale(1);
+            }
+            50% {
+                opacity: 0.35;
+                transform: scale(0.85);
+            }
+        }
+        .pulse-dot {
+            animation: pulse-dot 1.6s ease-in-out infinite;
+        }
+
+        @keyframes ping-ring {
+            0% {
+                transform: scale(0.8);
+                opacity: 0.7;
+            }
+            80%,
+            100% {
+                transform: scale(2.4);
+                opacity: 0;
+            }
+        }
+        .ping-ring {
+            animation: ping-ring 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
+        }
+
+        @keyframes slide-in {
+            from {
+                opacity: 0;
+                transform: translateY(8px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        .slide-in {
+            animation: slide-in 0.35s ease-out both;
+        }
+
+        @keyframes shimmer {
+            0% {
+                background-position: -400px 0;
+            }
+            100% {
+                background-position: 400px 0;
+            }
+        }
+        .skeleton {
+            background: linear-gradient(90deg, #121b18 25%, #1a2621 37%, #121b18 63%);
+            background-size: 800px 100%;
+            animation: shimmer 1.4s infinite linear;
+        }
+
+        @keyframes flash-green {
+            0% {
+                background-color: rgba(61, 220, 132, 0.22);
+            }
+            100% {
+                background-color: transparent;
+            }
+        }
+        .flash-green {
+            animation: flash-green 0.8s ease-out;
+        }
+
+        @keyframes flash-red {
+            0% {
+                background-color: rgba(255, 92, 92, 0.22);
+            }
+            100% {
+                background-color: transparent;
+            }
+        }
+        .flash-red {
+            animation: flash-red 0.8s ease-out;
+        }
+
+        @keyframes marquee-scan {
+            0% {
+                transform: translateX(0);
+            }
+            100% {
+                transform: translateX(-50%);
+            }
+        }
+
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+
+        /* ----- Additional custom styles for the app ----- */
+        .stat-card {
+            background: rgba(14, 21, 19, 0.7);
+            border: 1px solid var(--color-line);
+            border-radius: 12px;
+            padding: 1rem 1.25rem;
+            transition: border-color 0.2s;
+        }
+        .stat-card:hover {
+            border-color: #2a3f36;
+        }
+
+        .badge-neon {
+            background: var(--color-neon-dim);
+            color: var(--color-neon);
+            padding: 0.1rem 0.6rem;
+            border-radius: 9999px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+            border: 1px solid rgba(61, 220, 132, 0.2);
+        }
+
+        .badge-loss {
+            background: var(--color-loss-dim);
+            color: var(--color-loss);
+            padding: 0.1rem 0.6rem;
+            border-radius: 9999px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            border: 1px solid rgba(255, 92, 92, 0.2);
+        }
+
+        .badge-warn {
+            background: var(--color-warn-dim);
+            color: var(--color-warn);
+            padding: 0.1rem 0.6rem;
+            border-radius: 9999px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            border: 1px solid rgba(240, 184, 73, 0.2);
+        }
+
+        .nav-link {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.5rem 0.9rem;
+            border-radius: 8px;
+            color: var(--color-dim);
+            font-size: 0.875rem;
+            font-weight: 500;
+            transition: all 0.15s;
+            cursor: pointer;
+            text-decoration: none;
+            border: none;
+            background: transparent;
+            width: 100%;
+            text-align: left;
+        }
+        .nav-link:hover {
+            color: var(--color-ink);
+            background: rgba(28, 40, 35, 0.5);
+        }
+        .nav-link.active {
+            color: var(--color-neon);
+            background: rgba(61, 220, 132, 0.08);
+            border: 1px solid rgba(61, 220, 132, 0.15);
+        }
+        .nav-link .icon {
+            width: 20px;
+            height: 20px;
+            flex-shrink: 0;
+        }
+
+        .grid-panel {
+            display: grid;
+            gap: 1rem;
+        }
+
+        .mini-chart {
+            height: 52px;
+            width: 100%;
+            display: flex;
+            align-items: flex-end;
+            gap: 1px;
+        }
+        .mini-chart .bar {
+            flex: 1;
+            border-radius: 1px 1px 0 0;
+            min-height: 2px;
+            transition: height 0.3s;
+        }
+
+        .candle-chart {
+            display: flex;
+            align-items: flex-end;
+            gap: 2px;
+            height: 80px;
+            width: 100%;
+        }
+        .candle-chart .candle {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-end;
+            height: 100%;
+            position: relative;
+        }
+        .candle-chart .candle .wick {
+            width: 1px;
+            background: var(--color-dim);
+            flex: 1;
+            min-height: 2px;
+        }
+        .candle-chart .candle .body {
+            width: 100%;
+            min-height: 2px;
+            border-radius: 1px;
+            flex-shrink: 0;
+        }
+        .candle-chart .candle .body.green {
+            background: var(--color-neon);
+        }
+        .candle-chart .candle .body.red {
+            background: var(--color-loss);
+        }
+
+        .signal-pulse {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--color-neon);
+            animation: pulse-dot 1.6s ease-in-out infinite;
+        }
+        .signal-pulse.buy {
+            background: var(--color-neon);
+        }
+        .signal-pulse.sell {
+            background: var(--color-loss);
+        }
+        .signal-pulse.neutral {
+            background: var(--color-warn);
+        }
+
+        .activity-ticker {
+            overflow: hidden;
+            position: relative;
+            height: 28px;
+        }
+        .activity-ticker .ticker-track {
+            display: flex;
+            animation: marquee-scan 28s linear infinite;
+            width: max-content;
+        }
+        .activity-ticker .ticker-item {
+            padding: 0 2rem;
+            white-space: nowrap;
+            font-size: 0.8rem;
+            color: var(--color-dim);
+        }
+        .activity-ticker .ticker-item .highlight {
+            color: var(--color-ink);
+        }
+
+        @media (max-width: 768px) {
+            .hide-mobile {
+                display: none !important;
+            }
+            .stat-card {
+                padding: 0.75rem;
+            }
+        }
+    </style>
+
+    <!-- ==================== React Import Map ==================== -->
+    <script type="importmap">
+        {
+            "imports": {
+                "react": "https://esm.sh/react@18.3.1",
+                "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
+                "clsx": "https://esm.sh/clsx@2.1.0",
+                "tailwind-merge": "https://esm.sh/tailwind-merge@2.2.2",
+                "lucide-react": "https://esm.sh/lucide-react@0.344.0"
+            }
+        }
+    </script>
 </head>
+
 <body>
+    <div id="root"></div>
 
-<header>
-  <div class="brand">
-    <div class="brand-title">Scalping Talal Bot</div>
-    <div class="brand-sub">Binance Spot</div>
-  </div>
-  <div class="live-pill"><span class="live-dot"></span>LIVE</div>
-</header>
+    <!-- ==================== ALL APPLICATION CODE ==================== -->
+    <script type="module">
+        // ----- 1. IMPORTS -----
+        import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
+        import { createRoot } from "react-dom/client";
+        import { clsx } from "clsx";
+        import { twMerge } from "tailwind-merge";
+        import {
+            LayoutDashboard, Activity, Wallet, History, BarChart3, TrendingUp,
+            ShieldAlert, Cpu, Radar, Zap, Rss, HeartPulse, Bell, Settings,
+            ArrowUp, ArrowDown, Minus, ChevronRight, ChevronDown, X, Circle,
+            Clock, AlertCircle, CheckCircle, Loader2, Eye, TrendingUp as TrendUp,
+            TrendingDown as TrendDown, MoreVertical, RefreshCw
+        } from "lucide-react";
 
-<div id="app">
-  <div class="loading">جارِ تحميل بيانات البوت...</div>
-</div>
+        // ----- 2. UTILITIES (cn, format) -----
+        function cn(...inputs) { return twMerge(clsx(inputs)); }
 
-<footer>
-  يقرأ مباشرة من state.json و trades_log.csv · تحديث عند فتح الصفحة
-</footer>
+        function usd(n, digits = 2) {
+            const sign = n < 0 ? "-" : "";
+            const v = Math.abs(n);
+            return `${sign}$${v.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
+        }
+        function usdSigned(n, digits = 2) {
+            const sign = n > 0 ? "+" : n < 0 ? "-" : "";
+            return `${sign}$${Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
+        }
+        function pct(n, digits = 2) {
+            const sign = n > 0 ? "+" : "";
+            return `${sign}${n.toFixed(digits)}%`;
+        }
+        function num(n, digits = 2) { return n.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits }); }
+        function price(n) {
+            if (n >= 100) return n.toFixed(2);
+            if (n >= 1) return n.toFixed(4);
+            return n.toFixed(5);
+        }
+        function compact(n) {
+            if (Math.abs(n) >= 1e9) return (n / 1e9).toFixed(2) + "B";
+            if (Math.abs(n) >= 1e6) return (n / 1e6).toFixed(2) + "M";
+            if (Math.abs(n) >= 1e3) return (n / 1e3).toFixed(1) + "K";
+            return n.toFixed(0);
+        }
+        function timeAgo(ts) {
+            const s = Math.floor((Date.now() - ts) / 1000);
+            if (s < 5) return "just now";
+            if (s < 60) return `${s}s ago`;
+            const m = Math.floor(s / 60);
+            if (m < 60) return `${m}m ago`;
+            const h = Math.floor(m / 60);
+            if (h < 24) return `${h}h ago`;
+            const d = Math.floor(h / 24);
+            return `${d}d ago`;
+        }
+        function clock(ts) { return new Date(ts).toLocaleTimeString("en-US", { hour12: false }); }
+        function dateTime(ts) {
+            const d = new Date(ts);
+            const mm = String(d.getMonth() + 1).padStart(2, "0");
+            const dd = String(d.getDate()).padStart(2, "0");
+            const hh = String(d.getHours()).padStart(2, "0");
+            const mi = String(d.getMinutes()).padStart(2, "0");
+            return `${mm}-${dd} ${hh}:${mi}`;
+        }
+        function duration(min) {
+            const h = Math.floor(min / 60);
+            const m = Math.round(min % 60);
+            if (h === 0) return `${m}m`;
+            return `${String(h).padStart(2, "0")}h ${String(m).padStart(2, "0")}m`;
+        }
+        function durationFrom(ts) {
+            const min = (Date.now() - ts) / 60000;
+            const h = Math.floor(min / 60);
+            const m = Math.floor(min % 60);
+            const s = Math.floor((min * 60) % 60);
+            return `${String(h).padStart(2, "0")}h ${String(m).padStart(2, "0")}m ${String(s).padStart(2, "0")}s`;
+        }
 
-<script>
-const INITIAL_CAPITAL = 10000;
-// مسارات نسبية (نفس مجلد الصفحة على GitHub Pages) - بهيك المتصفح ما يطلب من
-// raw.githubusercontent.com ولا يكشف اسم المستودع أو الحساب لأي زائر للموقع.
-// هذا شغال حتى لو المستودع نفسه Private، لأن GitHub Pages بيضل يعرض الموقع للعموم.
-// ملاحظة: لازم تكون دوال (مو ثوابت) عشان الـ timestamp يتجدد كل مرة نجيب فيها البيانات
-// من جديد - وإلا نفس الرابط بيتكرر والمتصفح ممكن يرجّع نسخة مخزّنة (cache) قديمة.
-function STATE_URL(){ return "./state.json?_=" + Date.now(); }
-function TRADES_URL(){ return "./trades_log.csv?_=" + Date.now(); }
-function SHADOW_TRADES_URL(){ return "./shadow_trades_log.csv?_=" + Date.now(); }
+        // ----- 3. TYPES (from types.ts) -----
+        // (using JSDoc comments for clarity, but we keep as plain JS objects)
+        // We'll define everything as plain JS with type hints via JSDoc
 
-const app = document.getElementById('app');
+        // ----- 4. NAVIGATION (from nav.ts) -----
+        const NAV = [
+            { id: "overview", label: "Overview", icon: LayoutDashboard, group: "Trading" },
+            { id: "live", label: "Live Trading", icon: Activity, group: "Trading" },
+            { id: "positions", label: "Open Positions", icon: Wallet, group: "Trading" },
+            { id: "history", label: "Trade History", icon: History, group: "Trading" },
+            { id: "analytics", label: "Analytics", icon: BarChart3, group: "Insights" },
+            { id: "performance", label: "Performance", icon: TrendingUp, group: "Insights" },
+            { id: "risk", label: "Risk Management", icon: ShieldAlert, group: "Insights" },
+            { id: "strategy", label: "Strategy Monitor", icon: Cpu, group: "Insights" },
+            { id: "scanner", label: "Market Scanner", icon: Radar, group: "Signals" },
+            { id: "signals", label: "Signals", icon: Zap, group: "Signals" },
+            { id: "activity", label: "Bot Activity", icon: Rss, group: "System" },
+            { id: "health", label: "System Health", icon: HeartPulse, group: "System" },
+            { id: "alerts", label: "Alerts", icon: Bell, group: "System" },
+            { id: "settings", label: "Settings", icon: Settings, group: "System" },
+        ];
+        const MOBILE_NAV = ["overview", "positions", "activity", "scanner", "alerts"];
 
-function esc(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+        // ----- 5. MOCK DATA (from mock.ts) -----
+        const INITIAL_CAPITAL = 10000;
+        let seed = 1337;
 
-async function fetchBinancePrices(symbols){
-  const prices = {};
-  await Promise.all(symbols.map(async (sym) => {
-    try{
-      const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${encodeURIComponent(sym)}`);
-      if(!res.ok) return;
-      const data = await res.json();
-      const p = parseFloat(data.price);
-      if(!isNaN(p)) prices[sym] = p;
-    }catch(e){ /* ignore individual symbol failures */ }
-  }));
-  return prices;
-}
+        function rnd() {
+            seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+            return seed / 0x7fffffff;
+        }
 
-function fmtTime(iso){
-  if(!iso) return '--';
-  try{
-    const d = new Date(iso);
-    const mm = String(d.getMonth()+1).padStart(2,'0');
-    const dd = String(d.getDate()).padStart(2,'0');
-    const hh = String(d.getHours()).padStart(2,'0');
-    const mi = String(d.getMinutes()).padStart(2,'0');
-    return `${mm}-${dd} ${hh}:${mi}`;
-  }catch(e){ return iso; }
-}
+        function range(min, max) { return min + rnd() * (max - min); }
 
-function fmtNum(n, digits=2){
-  const v = parseFloat(n);
-  if(isNaN(v)) return '--';
-  return v.toFixed(digits);
-}
+        function pick(arr) { return arr[Math.floor(rnd() * arr.length)]; }
 
-function buildEquitySvg(series){
-  if(!series || series.length < 2){
-    return `<div style="color:var(--text-faint); font-family:var(--mono); font-size:11px; padding:8px 0;">لا توجد بيانات كافية بعد</div>`;
-  }
-  const W = 600, H = 90, PAD = 4;
-  const min = Math.min(...series);
-  const max = Math.max(...series);
-  const spread = (max - min) || 1;
-  const stepX = (W - PAD*2) / (series.length - 1);
-  const pts = series.map((v, i) => {
-    const x = PAD + i * stepX;
-    const y = H - PAD - ((v - min) / spread) * (H - PAD*2);
-    return [x, y];
-  });
-  const lineD = pts.map((p,i) => (i===0 ? 'M' : 'L') + p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
-  const areaD = lineD + ` L${pts[pts.length-1][0].toFixed(1)},${H-PAD} L${pts[0][0].toFixed(1)},${H-PAD} Z`;
-  const rising = series[series.length-1] >= series[0];
-  const stroke = rising ? 'var(--green)' : 'var(--red)';
-  const fillId = 'eqfill';
-  return `
-    <svg class="equity-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
-      <defs>
-        <linearGradient id="${fillId}" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="${rising ? '#3ddc84' : '#ff5c5c'}" stop-opacity="0.28"/>
-          <stop offset="100%" stop-color="${rising ? '#3ddc84' : '#ff5c5c'}" stop-opacity="0"/>
-        </linearGradient>
-      </defs>
-      <path d="${areaD}" fill="url(#${fillId})" stroke="none"/>
-      <path d="${lineD}" fill="none" stroke="${stroke}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
-    </svg>`;
-}
+        const SYMBOLS = [
+            "PROMUSDT", "IOTAUSDT", "DGBUSDT", "PHAUSDT", "VANAUSDT", "FETUSDT",
+            "RUNEUSDT", "INJUSDT", "SEIUSDT", "ARBUSDT", "OPUSDT", "SUIUSDT",
+            "TIAUSDT", "JTOUSDT", "PYTHUSDT", "ORDIUSDT", "WLDUSDT", "RNDRUSDT"
+        ];
 
-function parseCSV(text){
-  // trades_log.csv has no header row per the sample; columns:
-  // symbol, signal_time, signal_price, exit_time, exit_price, pnl_pct, pnl_dollars, exit_reason, score, balance, (extra col sometimes)
-  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-  const rows = [];
-  for(const line of lines){
-    const parts = line.split(',');
-    if(parts.length < 8) continue;
-    rows.push({
-      symbol: parts[0],
-      signal_time: parts[1],
-      signal_price: parts[2],
-      exit_time: parts[3],
-      exit_price: parts[4],
-      pnl_pct: parseFloat(parts[5]),
-      pnl_dollars: parseFloat(parts[6]),
-      exit_reason: (parts[7]||'').trim(),
-      score: parts[8],
-      balance: parts[9]
-    });
-  }
-  return rows.reverse(); // most recent first
-}
+        const BASE_PRICE = {};
+        SYMBOLS.forEach(s => BASE_PRICE[s] = range(0.05, 45));
 
-// shadow_trades_log.csv بنفس بنية الأعمدة تمامًا زي trades_log.csv (المسار الموازي بدون حد
-// على عدد الصفقات المتزامنة) - فقط اسم آخر عمود مختلف (shadow_balance_after بدل balance_after)،
-// وهذا مو مستخدم هون أصلًا لأنه القراءة بالفهرس الرقمي مش بالاسم.
-function parseShadowCSV(text){
-  return parseCSV(text);
-}
+        const now = Date.now();
+        const HOUR = 3600_000;
+        const DAY = 24 * HOUR;
 
-function reasonKey(reason){
-  const r = (reason||'').toLowerCase();
-  if(r.includes('tp')) return 'tp';
-  if(r.includes('sl')) return 'sl';
-  return 'timeout';
-}
+        // Trades
+        function genTrades(count) {
+            const trades = [];
+            let t = now - count * range(1.2, 2.4) * HOUR;
+            for (let i = 0; i < count; i++) {
+                const symbol = pick(SYMBOLS);
+                const side = rnd() > 0.15 ? "BUY" : "SELL";
+                const entry = BASE_PRICE[symbol] * range(0.9, 1.1);
+                const score = Math.round(range(55, 92));
+                const win = rnd() < 0.62;
+                const durationMin = Math.round(range(12, 360));
+                const reason = win ? (rnd() < 0.8 ? "TP" : "TIMEOUT") : (rnd() < 0.7 ? "SL" : "TIMEOUT");
+                const pnlPct = win ? range(0.4, 2.6) : -range(0.3, 1.8);
+                const sizeUsd = range(1500, 4200);
+                const pnlUsd = (pnlPct / 100) * sizeUsd;
+                const tp = side === "BUY" ? entry * (1 + range(0.015, 0.04)) : entry * (1 - range(0.015, 0.04));
+                const sl = side === "BUY" ? entry * (1 - range(0.012, 0.025)) : entry * (1 + range(0.012, 0.025));
+                const exit = side === "BUY" ? entry * (1 + pnlPct / 100) : entry * (1 - pnlPct / 100);
+                const rr = Math.abs(tp - entry) / Math.abs(sl - entry);
+                t += range(0.8, 2.6) * HOUR;
+                trades.push({
+                    id: `T${1000 + i}`,
+                    symbol,
+                    side,
+                    entry,
+                    exit,
+                    tp,
+                    sl,
+                    pnlPct,
+                    pnlUsd,
+                    roi: pnlPct,
+                    reason,
+                    score,
+                    entryTime: t,
+                    exitTime: t + durationMin * 60000,
+                    durationMin,
+                    sizeUsd,
+                    rr
+                });
+            }
+            return trades;
+        }
+        const TRADES = genTrades(180);
 
-function reasonIcon(key){
-  return key === 'tp' ? '▲' : key === 'sl' ? '▼' : '●';
-}
+        // Equity
+        function buildEquity(trades) {
+            const sorted = [...trades].sort((a, b) => a.exitTime - b.exitTime);
+            let equity = INITIAL_CAPITAL;
+            let peak = equity;
+            const pts = [{ t: sorted[0]?.exitTime - DAY || now - 30 * DAY, equity, drawdown: 0 }];
+            for (const tr of sorted) {
+                equity += tr.pnlUsd;
+                peak = Math.max(peak, equity);
+                const dd = ((equity - peak) / peak) * 100;
+                pts.push({ t: tr.exitTime, equity, drawdown: dd });
+            }
+            return pts;
+        }
+        const EQUITY = buildEquity(TRADES);
 
-function reasonLabelAr(key){
-  return key === 'tp' ? 'هدف' : key === 'sl' ? 'وقف خسارة' : 'انتهاء وقت';
-}
+        // Candles
+        function genCandles(base, side, n = 80) {
+            const out = [];
+            let price = base * range(0.985, 0.995);
+            let t = now - n * 5 * 60000;
+            const drift = side === "BUY" ? 0.0006 : -0.0004;
+            for (let i = 0; i < n; i++) {
+                const o = price;
+                const move = (rnd() - 0.5) * 0.012 + drift;
+                const c = o * (1 + move);
+                const h = Math.max(o, c) * (1 + rnd() * 0.005);
+                const l = Math.min(o, c) * (1 - rnd() * 0.005);
+                out.push({ t, o, h, l, c, v: range(1e5, 9e5) });
+                price = c;
+                t += 5 * 60000;
+            }
+            return out;
+        }
 
-async function load(){
-  try{
-    const [stateRes, tradesRes, shadowTradesRes] = await Promise.allSettled([
-      fetch(STATE_URL()).then(r => { if(!r.ok) throw new Error('state'); return r.json(); }),
-      fetch(TRADES_URL()).then(r => { if(!r.ok) throw new Error('trades'); return r.text(); }),
-      fetch(SHADOW_TRADES_URL()).then(r => { if(!r.ok) throw new Error('shadow_trades'); return r.text(); })
-    ]);
+        // Positions
+        function genPositions(count) {
+            const chosen = [...SYMBOLS].sort(() => rnd() - 0.5).slice(0, count);
+            return chosen.map((symbol, i) => {
+                const side = rnd() > 0.2 ? "BUY" : "SELL";
+                const entry = BASE_PRICE[symbol];
+                const candles = genCandles(entry, side);
+                const current = candles[candles.length - 1].c;
+                const tp = side === "BUY" ? entry * (1 + range(0.02, 0.045)) : entry * (1 - range(0.02, 0.045));
+                const sl = side === "BUY" ? entry * (1 - range(0.015, 0.03)) : entry * (1 + range(0.015, 0.03));
+                const sizeUsd = range(2000, 4200);
+                return {
+                    id: `P${i}`,
+                    symbol,
+                    side,
+                    entry,
+                    current,
+                    tp,
+                    sl,
+                    score: Math.round(range(58, 90)),
+                    sizeUsd,
+                    qty: sizeUsd / entry,
+                    openTime: now - range(0.3, 8) * HOUR,
+                    candles
+                };
+            });
+        }
+        const POSITIONS = genPositions(5);
 
-    const state = stateRes.status === 'fulfilled' ? stateRes.value : null;
-    const tradesText = tradesRes.status === 'fulfilled' ? tradesRes.value : '';
-    const trades = tradesText ? parseCSV(tradesText) : [];
-    // شادو: لو الملف لسا مش موجود بالمستودع (أول تشغيل)، منكمل بقائمة فاضية بدون ما نكسر الصفحة
-    const shadowTradesText = shadowTradesRes.status === 'fulfilled' ? shadowTradesRes.value : '';
-    const shadowTrades = shadowTradesText ? parseShadowCSV(shadowTradesText) : [];
+        // Signals
+        function genSignals(count = 12) {
+            const statuses = ["New", "Waiting", "Triggered", "Opened", "TP Hit", "SL Hit", "Expired"];
+            return Array.from({ length: count }, (_, i) => {
+                const symbol = pick(SYMBOLS);
+                const side = rnd() > 0.2 ? "BUY" : "SELL";
+                const entry = BASE_PRICE[symbol] * range(0.98, 1.02);
+                const tp = side === "BUY" ? entry * (1 + range(0.02, 0.045)) : entry * (1 - range(0.02, 0.045));
+                const sl = side === "BUY" ? entry * (1 - range(0.015, 0.03)) : entry * (1 + range(0.015, 0.03));
+                return {
+                    id: `S${i}`,
+                    symbol,
+                    side,
+                    score: Math.round(range(55, 94)),
+                    entry,
+                    tp,
+                    sl,
+                    rr: Math.abs(tp - entry) / Math.abs(sl - entry),
+                    time: now - range(0.05, 6) * HOUR,
+                    status: pick(statuses)
+                };
+            }).sort((a, b) => b.time - a.time);
+        }
+        const SIGNALS = genSignals(14);
 
-    let livePrices = {};
-    if(state && state.open_positions){
-      const openSyms = Object.keys(state.open_positions);
-      if(openSyms.length) livePrices = await fetchBinancePrices(openSyms);
-    }
+        // Scanner
+        function genScanner() {
+            return SYMBOLS.map((symbol) => {
+                const score = Math.round(range(20, 95));
+                const signal = score > 72 ? "BUY" : score < 35 ? "SELL" : "NEUTRAL";
+                return {
+                    symbol,
+                    price: BASE_PRICE[symbol],
+                    change24h: range(-9, 12),
+                    volume: range(5e6, 4e8),
+                    signal,
+                    score,
+                    trend: score > 60 ? "UP" : score < 40 ? "DOWN" : "FLAT",
+                    rsi: range(22, 82),
+                    macd: range(-0.5, 0.6),
+                    ema: rnd() > 0.5 ? "ABOVE" : "BELOW",
+                    volatility: range(0.8, 6.5),
+                    status: score > 78 ? "Signal" : rnd() > 0.7 ? "In Trade" : "Watching"
+                };
+            });
+        }
+        const SCANNER = genScanner();
 
-    render(state, trades, livePrices, shadowTrades);
-  }catch(err){
-    app.innerHTML = `<div class="error-box">تعذّر تحميل البيانات.<br>${esc(err.message||'')}</div>`;
-  }
-}
+        // Activity
+        function genActivity(n = 14) {
+            const templates = [
+                { type: "signal", msg: "New signal detected" },
+                { type: "open", msg: "Position opened" },
+                { type: "price", msg: "Price updated" },
+                { type: "tp", msg: "Take profit hit" },
+                { type: "sl", msg: "Stop loss hit" },
+                { type: "info", msg: "Market scan complete" }
+            ];
+            return Array.from({ length: n }, (_, i) => {
+                const tpl = pick(templates);
+                const symbol = pick(SYMBOLS);
+                let pnl = undefined;
+                let detail = "";
+                if (tpl.type === "tp") { pnl = range(15, 55);
+                    detail = `+$${pnl.toFixed(2)}`; }
+                if (tpl.type === "sl") { pnl = -range(15, 48);
+                    detail = `-$${Math.abs(pnl).toFixed(2)}`; }
+                if (tpl.type === "signal") detail = `Score ${Math.round(range(60, 92))}%`;
+                if (tpl.type === "open") detail = `Entry ${(BASE_PRICE[symbol] * range(0.99, 1.01)).toFixed(4)}`;
+                if (tpl.type === "price") detail = (BASE_PRICE[symbol] * range(0.99, 1.01)).toFixed(4);
+                return {
+                    id: `A${i}-${seed}`,
+                    type: tpl.type,
+                    symbol,
+                    message: tpl.msg,
+                    detail,
+                    pnl,
+                    time: now - i * range(30000, 240000)
+                };
+            });
+        }
+        const ACTIVITY = genActivity(18);
 
-function render(state, trades, livePrices, shadowTrades){
-  livePrices = livePrices || {};
-  shadowTrades = shadowTrades || [];
-  const openPositions = state && state.open_positions ? state.open_positions : {};
-  const openSymbols = Object.keys(openPositions);
+        // Alerts
+        const ALERTS = [
+            { id: "AL1", kind: "tp", title: "Take Profit Hit", body: "IOTAUSDT closed +$41.35", time: now - 3 * 60000,
+                read: false, severity: "success" },
+            { id: "AL2", kind: "signal", title: "New Signal", body: "PROMUSDT · Score 69%", time: now - 12 * 60000,
+                read: false, severity: "info" },
+            { id: "AL3", kind: "sl", title: "Stop Loss Hit", body: "VANAUSDT closed -$44.48", time: now - 34 * 60000,
+                read: false, severity: "error" },
+            { id: "AL4", kind: "open", title: "Position Opened", body: "SEIUSDT · Entry 0.5820", time: now - 58 * 60000,
+                read: true, severity: "info" },
+            { id: "AL5", kind: "drawdown", title: "Drawdown Warning", body: "Daily drawdown reached -2.8%",
+                time: now - 2 * HOUR, read: true, severity: "warn" },
+            { id: "AL6", kind: "connection", title: "WebSocket Reconnected", body: "Binance stream restored",
+                time: now - 5 * HOUR, read: true, severity: "info" },
+            { id: "AL7", kind: "restart", title: "Bot Restarted", body: "Scheduled maintenance restart",
+                time: now - 9 * HOUR, read: true, severity: "warn" }
+        ];
 
-  // ---- stats ----
-  const closed = trades.filter(t => !isNaN(t.pnl_dollars));
-  // "ناجحة" = أي صفقة قفلت بربح، بغض النظر عن سبب الإغلاق (TP/SL/Timeout)
-  const wins = closed.filter(t => t.pnl_dollars > 0);
-  const losses = closed.filter(t => t.pnl_dollars <= 0);
-  const winRate = closed.length ? (wins.length / closed.length * 100) : 0;
-  const totalPnl = closed.reduce((s,t) => s + (isNaN(t.pnl_dollars)?0:t.pnl_dollars), 0);
-  const lastBalance = closed.length ? closed[0].balance : null;
-  const roiPct = (totalPnl / INITIAL_CAPITAL) * 100;
+        // Stats
+        function computeStats(trades) {
+            const closed = trades;
+            const wins = closed.filter(t => t.pnlUsd > 0);
+            const losses = closed.filter(t => t.pnlUsd <= 0);
+            const totalPnl = closed.reduce((s, t) => s + t.pnlUsd, 0);
+            const grossWin = wins.reduce((s, t) => s + t.pnlUsd, 0);
+            const grossLoss = Math.abs(losses.reduce((s, t) => s + t.pnlUsd, 0));
+            const winRate = closed.length ? (wins.length / closed.length) * 100 : 0;
+            const profitFactor = grossLoss ? grossWin / grossLoss : grossWin;
+            const equity = INITIAL_CAPITAL + totalPnl;
+            const avgTrade = closed.length ? totalPnl / closed.length : 0;
+            const best = closed.reduce((m, t) => t.pnlUsd > m ? t.pnlUsd : m, -Infinity);
+            const worst = closed.reduce((m, t) => t.pnlUsd < m ? t.pnlUsd : m, Infinity);
+            const avgWin = wins.length ? grossWin / wins.length : 0;
+            const avgLoss = losses.length ? grossLoss / losses.length : 0;
+            const eq = buildEquity(closed);
+            const maxDd = Math.min(...eq.map(p => p.drawdown));
+            const rets = closed.map(t => t.pnlPct);
+            const mean = rets.reduce((s, r) => s + r, 0) / (rets.length || 1);
+            const variance = rets.reduce((s, r) => s + (r - mean) ** 2, 0) / (rets.length || 1);
+            const sharpe = variance ? (mean / Math.sqrt(variance)) * Math.sqrt(closed.length / 30) : 0;
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const todayTrades = closed.filter(t => t.exitTime >= today.getTime());
+            const todayPnl = todayTrades.reduce((s, t) => s + t.pnlUsd, 0);
+            return {
+                equity,
+                available: equity * 0.42,
+                totalPnl,
+                todayPnl,
+                dailyReturn: (todayPnl / (equity - todayPnl || 1)) * 100,
+                totalReturn: (totalPnl / INITIAL_CAPITAL) * 100,
+                winRate,
+                profitFactor,
+                totalTrades: closed.length,
+                wins: wins.length,
+                losses: losses.length,
+                maxDrawdown: maxDd,
+                sharpe,
+                avgTrade,
+                best,
+                worst,
+                avgWin,
+                avgLoss,
+                avgRR: closed.reduce((s, t) => s + t.rr, 0) / (closed.length || 1),
+                avgDuration: closed.reduce((s, t) => s + t.durationMin, 0) / (closed.length || 1)
+            };
+        }
+        const STATS = computeStats(TRADES);
 
-  // ---- إحصائيات مسار الظل (بدون حد على عدد الصفقات المتزامنة) - نفس منطق الحقيقي بالضبط ----
-  const shadowClosed = shadowTrades.filter(t => !isNaN(t.pnl_dollars));
-  const shadowWins = shadowClosed.filter(t => t.pnl_dollars > 0);
-  const shadowLosses = shadowClosed.filter(t => t.pnl_dollars <= 0);
-  const shadowWinRate = shadowClosed.length ? (shadowWins.length / shadowClosed.length * 100) : 0;
-  const shadowTotalPnl = shadowClosed.reduce((s,t) => s + (isNaN(t.pnl_dollars)?0:t.pnl_dollars), 0);
-  const shadowRoiPct = (shadowTotalPnl / INITIAL_CAPITAL) * 100;
-  const shadowOpenCount = state && state.shadow_open_positions ? Object.keys(state.shadow_open_positions).length : 0;
-  const shadowPendingCount = state && state.shadow_pending_setups ? Object.keys(state.shadow_pending_setups).length : 0;
-  const shadowBalance = state && state.shadow_balance != null ? state.shadow_balance : (INITIAL_CAPITAL + shadowTotalPnl);
+        // ----- 6. REACT COMPONENTS -----
 
-  // ---- floating (unrealized) PnL for open positions, using live Binance prices ----
-  let floatingPnl = 0;
-  let floatingPnlKnown = false;
-  openSymbols.forEach(sym => {
-    const p = openPositions[sym];
-    const entry = parseFloat(p.entry_price);
-    const sl = parseFloat(p.sl);
-    const tp = parseFloat(p.tp);
-    const isLong = tp > entry;
-    const cur = livePrices[sym];
-    const posDollars = parseFloat(p.position_dollars);
-    if(cur != null && !isNaN(cur) && !isNaN(entry) && entry !== 0 && !isNaN(posDollars)){
-      const changePct = isLong ? (cur - entry) / entry : (entry - cur) / entry;
-      floatingPnl += changePct * posDollars;
-      floatingPnlKnown = true;
-    }
-  });
+        // --- Mini Chart component for positions ---
+        function MiniCandleChart({ candles, side }) {
+            if (!candles || candles.length === 0) return null;
+            const last = candles.slice(-30);
+            const min = Math.min(...last.map(c => c.l));
+            const max = Math.max(...last.map(c => c.h));
+            const range2 = max - min || 1;
+            return ( <
+                    div className = "candle-chart" > {
+                        last.map((c, i) => {
+                            const h = ((c.c - min) / range2) * 100;
+                            const isGreen = c.c >= c.o;
+                            return ( <
+                                    div key = { i }
+                                    className = "candle" >
+                                    <
+                                    div className = "wick"
+                                    style = { { flex: 1 } } > < /div> <
+                                    div className = { `body ${isGreen ? 'green' : 'red'}` }
+                                    style = { { height: Math.max(2, h * 0.7) } } >
+                                    <
+                                    /div> <
+                                    /div>
+                                );
+                            })
+                        } <
+                        /div>
+                    );
+                }
 
-  // ---- heartbeat strip: last ~40 trades (oldest->newest) + open as pulsing ----
-  const hbTrades = closed.slice(0, 40).reverse();
-  let hbHtml = hbTrades.map(t => `<div class="hb-dot ${t.pnl_dollars > 0 ? 'tp' : 'sl'}" title="${esc(t.symbol)}"></div>`).join('');
-  hbHtml += openSymbols.map(() => `<div class="hb-dot open"></div>`).join('');
-  if(!hbHtml) hbHtml = `<div style="color:var(--text-faint); font-family:var(--mono); font-size:11px; padding:4px;">لا يوجد سجل بعد</div>`;
+                // --- Stat Card ---
+                function StatCard({ label, value, sub, color = "neon", icon: Icon }) {
+                    const colorMap = {
+                        neon: "text-neon",
+                        loss: "text-loss",
+                        warn: "text-warn",
+                        info: "text-info",
+                        violet: "text-violet"
+                    };
+                    return ( <
+                        div className = "stat-card flex items-start gap-3" >
+                        {
+                            Icon && < Icon className = { `w-5 h-5 mt-0.5 text-${color}` }
+                            />} <
+                            div >
+                            <
+                            div className = "text-dim text-xs uppercase tracking-wider" > { label } < /div> <
+                            div className = { `text-lg font-semibold mono ${color !== 'default' ? `text-${color}` : ''}` } >
+                            { value } <
+                            /div> {
+                                sub && < div className = "text-faint text-xs mt-0.5" > { sub } < /div>} <
+                                /div> <
+                                /div>
+                            );
+                        }
 
-  // ---- open positions cards ----
-  let posHtml = '';
-  if(openSymbols.length === 0){
-    posHtml = `<div class="empty-state">لا توجد صفقات مفتوحة حالياً</div>`;
-  }else{
-    posHtml = openSymbols.map(sym => {
-      const p = openPositions[sym];
-      const entry = parseFloat(p.entry_price);
-      const sl = parseFloat(p.sl);
-      const tp = parseFloat(p.tp);
-      const isLong = tp > entry;
-      // progress 0..1 across sl->tp range, position = entry (approx, no live price available)
-      const range = Math.abs(tp - sl) || 1;
-      const entryPct = isLong
-        ? ((entry - sl) / range) * 100
-        : ((sl - entry) / range) * 100;
-      const clamped = Math.max(4, Math.min(96, entryPct));
-      const scorePct = p.score ? (parseFloat(p.score)*100).toFixed(0) : null;
-      const strategy = p.strategy || p.strategy_name || null;
+                        // --- Main App ---
+                        function App() {
+                            const [activeView, setActiveView] = useState("overview");
+                            const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-      // current price marker — fetched live from Binance
-      const currentPrice = livePrices[sym];
-      let currentMarkerHtml = '';
-      if(currentPrice != null && !isNaN(currentPrice)){
-        const curPct = isLong
-          ? ((currentPrice - sl) / range) * 100
-          : ((sl - currentPrice) / range) * 100;
-        const curClamped = Math.max(2, Math.min(98, curPct));
-        currentMarkerHtml = `<div class="pos-bar-marker current" style="left:${curClamped}%;" title="السعر الحالي ${fmtNum(currentPrice,4)}"></div>`;
-      }
+                            const currentNav = NAV.find(n => n.id === activeView) || NAV[0];
+                            const IconComp = currentNav.icon || LayoutDashboard;
 
-      return `
-      <div class="pos-card">
-        <div class="pos-top">
-          <span class="pos-symbol">${esc(sym)}</span>
-          <span class="pos-badge">${isLong ? 'شراء' : 'بيع'}${scorePct ? ' · Score ' + scorePct + '%' : ''}</span>
-        </div>
-        ${strategy ? `<div class="pos-strategy">${esc(strategy)}</div>` : ''}
-        <div class="pos-bar-wrap">
-          <div class="pos-bar-fill" style="width:100%; opacity:0.9;"></div>
-          <div class="pos-bar-marker" style="left:${clamped}%;"></div>
-          ${currentMarkerHtml}
-        </div>
-        <div class="pos-range-labels">
-          <span style="color:var(--red)">SL ${fmtNum(sl,4)}</span>
-          <span>دخول ${fmtNum(entry,4)}${currentPrice != null && !isNaN(currentPrice) ? ' · حالي ' + fmtNum(currentPrice,4) : ''}</span>
-          <span style="color:var(--green)">TP ${fmtNum(tp,4)}</span>
-        </div>
-        <div class="pos-grid">
-          <div class="pos-field">
-            <div class="pos-field-label">وقت الإشارة</div>
-            <div class="pos-field-value">${fmtTime(p.signal_time)}</div>
-          </div>
-          <div class="pos-field">
-            <div class="pos-field-label">وقت الدخول</div>
-            <div class="pos-field-value">${fmtTime(p.entry_time)}</div>
-          </div>
-          <div class="pos-field">
-            <div class="pos-field-label">حجم الصفقة</div>
-            <div class="pos-field-value">$${p.position_dollars ? fmtNum(p.position_dollars,1) : '--'}</div>
-          </div>
-          <div class="pos-field">
-            <div class="pos-field-label">وقف الخسارة</div>
-            <div class="pos-field-value sl">${fmtNum(sl,4)}</div>
-          </div>
-        </div>
-      </div>`;
-    }).join('');
-  }
+                            // Render content based on active view
+                            const renderContent = () => {
+                                switch (activeView) {
+                                    case "overview":
+                                        return <OverviewView / > ;
+                                    case "positions":
+                                        return <PositionsView / > ;
+                                    case "history":
+                                        return <HistoryView / > ;
+                                    case "scanner":
+                                        return <ScannerView / > ;
+                                    case "signals":
+                                        return <SignalsView / > ;
+                                    case "activity":
+                                        return <ActivityView / > ;
+                                    case "alerts":
+                                        return <AlertsView / > ;
+                                    default:
+                                        return <PlaceholderView title = { currentNav.label }
+                                        icon = { IconComp }
+                                        />;
+                                    }
+                                };
 
-  // ---- trade history rows ----
-  function tradeRowsHtml(filterKey){
-    const list = filterKey === 'all' ? closed : closed.filter(t => reasonKey(t.exit_reason) === filterKey);
-    if(list.length === 0) return `<div class="empty-state">لا توجد صفقات في هذا التصنيف</div>`;
-    return list.slice(0, 60).map(t => {
-      const key = reasonKey(t.exit_reason);
-      const isWin = t.pnl_dollars > 0;
-      const outcomeClass = isWin ? 'tp' : 'sl'; // لون الأيقونة حسب نتيجة الصفقة (ربح/خسارة) وليس سبب الإغلاق
-      const outcomeIcon = isWin ? '▲' : '▼';
-      const pnlClass = isWin ? 'pos' : 'neg';
-      const sign = isWin ? '+' : '';
-      return `
-      <div class="trade-row">
-        <div class="trade-icon ${outcomeClass}">${outcomeIcon}</div>
-        <div class="trade-mid">
-          <div class="trade-symbol">${esc(t.symbol)}</div>
-          <div class="trade-time">${fmtTime(t.exit_time)} · ${reasonLabelAr(key)}</div>
-        </div>
-        <div class="trade-right">
-          <div class="trade-pnl ${pnlClass}">${sign}${fmtNum(t.pnl_dollars,2)}$</div>
-          <div class="trade-pct">${sign}${fmtNum(t.pnl_pct,2)}%</div>
-        </div>
-      </div>`;
-    }).join('');
-  }
+                                return ( <
+                                    div className = "flex h-screen overflow-hidden" >
+                                    <
+                                    !-- Sidebar -- >
+                                    <
+                                    div className = { `fixed inset-y-0 left-0 z-40 w-64 glass border-r border-line transform transition-transform duration-200 ease-out ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 md:relative md:flex-shrink-0` } >
+                                    <
+                                    div className = "flex flex-col h-full p-3" >
+                                    <
+                                    div className = "flex items-center gap-2 px-2 py-3 mb-2 border-b border-line" >
+                                    <
+                                    div className = "w-3 h-3 rounded-full bg-neon pulse-dot" > < /div> <
+                                    span className = "font-bold text-sm tracking-tight" > Talal < span className =
+                                    "text-neon" > Bot < /span> < /span> <
+                                    span className = "text-faint text-[10px] font-mono ml-auto" > v2.1 < /span> <
+                                    /div> <
+                                    div className = "flex-1 overflow-y-auto no-scrollbar space-y-0.5" >
+                                    {
+                                        NAV.map(item => {
+                                            const isActive = activeView === item.id;
+                                            const Icon = item.icon;
+                                            return ( <
+                                                button key = { item.id }
+                                                onClick = {
+                                                    () => { setActiveView(item.id);
+                                                        setIsMobileMenuOpen(false); } }
+                                                className = { cn("nav-link", isActive && "active") } >
+                                                <
+                                                Icon className = "icon" / >
+                                                <
+                                                span > { item.label } < /span> {
+                                                    item.id === "alerts" && ALERTS.filter(a => !a.read).length > 0 && ( <
+                                                        span className = "ml-auto bg-neon text-bg text-[10px] font-bold px-1.5 py-0.5 rounded-full" >
+                                                        { ALERTS.filter(a => !a.read).length } <
+                                                        /span>
+                                                    )
+                                                } <
+                                                /button>
+                                            );
+                                        })
+                                    } <
+                                    /div> <
+                                    div className = "border-t border-line pt-2 mt-1 px-2" >
+                                    <
+                                    div className = "text-faint text-[10px] font-mono" >
+                                    { new Date().toLocaleDateString() } • { new Date().toLocaleTimeString() } <
+                                    /div> <
+                                    /div> <
+                                    /div> <
+                                    /div>
 
-  // ---- equity curve (built from cumulative pnl_dollars, not the raw balance column,
-  //      since historical balance values in the CSV can be unreliable/stale) ----
-  const equitySeries = [INITIAL_CAPITAL];
-  closed.slice().reverse().forEach(t => { // oldest -> newest
-    equitySeries.push(equitySeries[equitySeries.length - 1] + t.pnl_dollars);
-  });
-  const equitySvg = buildEquitySvg(equitySeries);
-  const equityLast = equitySeries[equitySeries.length - 1];
-  const equityChangePct = ((equityLast - INITIAL_CAPITAL) / INITIAL_CAPITAL) * 100;
+                                    <
+                                    !-- Mobile header + overlay -- >
+                                    {
+                                        isMobileMenuOpen && ( <
+                                            div className = "fixed inset-0 z-30 bg-black/60 md:hidden"
+                                            onClick = {
+                                                () => setIsMobileMenuOpen(false) } >
+                                            < /div>
+                                        )
+                                    } <
+                                    div className = "flex-1 flex flex-col min-w-0" >
+                                    <
+                                    div className = "md:hidden flex items-center gap-3 p-3 glass border-b border-line sticky top-0 z-20" >
+                                    <
+                                    button onClick = { () => setIsMobileMenuOpen(!isMobileMenuOpen) }
+                                    className = "text-ink p-1" >
+                                    <
+                                    svg className = "w-6 h-6"
+                                    fill = "none"
+                                    stroke = "currentColor"
+                                    viewBox = "0 0 24 24" >
+                                    <
+                                    path strokeLinecap = "round"
+                                    strokeLinejoin = "round"
+                                    strokeWidth = { 2 }
+                                    d = "M4 6h16M4 12h16M4 18h16" / >
+                                    <
+                                    /svg> <
+                                    /button> <
+                                    span className = "font-bold text-sm" > Talal Bot < /span> <
+                                    span className = "text-neon text-xs ml-auto" > ● Live < /span> <
+                                    /div> <
+                                    div className = "flex-1 overflow-y-auto p-3 md:p-5" >
+                                    { renderContent() } <
+                                    /div> <
+                                    /div> <
+                                    /div>
+                                );
+                            }
 
-  // ---- pending orders (signals not yet entered) ----
-  const pendingOrders = state && state.pending_orders ? state.pending_orders : (state && state.pending_signals ? state.pending_signals : {});
-  const pendingSymbols = Object.keys(pendingOrders);
-  let pendingHtml = '';
-  if(pendingSymbols.length === 0){
-    pendingHtml = `<div class="empty-state">لا توجد صفقات معلقة حالياً</div>`;
-  }else{
-    pendingHtml = pendingSymbols.map(sym => {
-      const p = pendingOrders[sym];
-      const side = p.side || p.direction || null;
-      const isBuy = side ? /buy|شراء/i.test(side) : null;
-      const sideLabel = isBuy === null ? '' : (isBuy ? 'شراء' : 'بيع');
-      const scorePct = p.score ? (parseFloat(p.score)*100).toFixed(0) : null;
-      return `
-      <div class="pending-card">
-        <div class="pending-top">
-          <span class="pending-symbol">${esc(sym)}</span>
-          <span class="pending-badge">${sideLabel}${scorePct ? (sideLabel ? ' · ' : '') + 'Score ' + scorePct + '%' : ''}</span>
-        </div>
-        <div class="pending-grid">
-          <div class="pos-field">
-            <div class="pos-field-label">وقت الإشارة</div>
-            <div class="pos-field-value">${fmtTime(p.signal_time)}</div>
-          </div>
-          <div class="pos-field">
-            <div class="pos-field-label">سعر الإشارة</div>
-            <div class="pos-field-value">${p.signal_price ? fmtNum(p.signal_price,4) : '--'}</div>
-          </div>
-        </div>
-      </div>`;
-    }).join('');
-  }
+                            // ----- VIEWS -----
 
-  app.innerHTML = `
-    <div class="section-title">منحنى رأس المال</div>
-    <div class="equity-card">
-      <div class="equity-top">
-        <span class="equity-value ${equityChangePct>=0?'pos':'neg'}">${equityChangePct>=0?'+':''}${fmtNum(equityChangePct,2)}%</span>
-        <span class="equity-sub">${fmtNum(equityLast,2)}$</span>
-      </div>
-      ${equitySvg}
-    </div>
+                            // Overview
+                            function OverviewView() {
+                                const stats = STATS;
+                                return ( <
+                                        div className = "space-y-4" >
+                                        <
+                                        div className = "flex items-center justify-between" >
+                                        <
+                                        h1 className = "text-xl font-bold tracking-tight" > Dashboard < /h1> <
+                                        span className = "text-dim text-xs mono" > Last updated: { clock(now) } < /span> <
+                                        /div>
 
-    <div class="heartbeat-section">
-      <div class="heartbeat-label">نبض البوت — آخر الصفقات</div>
-      <div class="heartbeat-strip">${hbHtml}</div>
-    </div>
+                                        <
+                                        div className = "grid grid-cols-2 lg:grid-cols-4 gap-3" >
+                                        <
+                                        StatCard label = "Equity"
+                                        value = { usd(stats.equity) }
+                                        sub = { `ROI ${pct(stats.totalReturn)}` }
+                                        color = "neon" / >
+                                        <
+                                        StatCard label = "Today P&L"
+                                        value = { usdSigned(stats.todayPnl) }
+                                        sub = { `${pct(stats.dailyReturn)} daily` }
+                                        color = { stats.todayPnl >= 0 ? "neon" : "loss" }
+                                        /> <
+                                        StatCard label = "Win Rate"
+                                        value = { `${stats.winRate.toFixed(1)}%` }
+                                        sub = { `${stats.wins}W / ${stats.losses}L` }
+                                        color = "violet" / >
+                                        <
+                                        StatCard label = "Profit Factor"
+                                        value = { stats.profitFactor.toFixed(2) }
+                                        sub = { `Sharpe ${stats.sharpe.toFixed(2)}` }
+                                        color = "info" / >
+                                        <
+                                        /div>
 
-    <div class="stats-grid">
-      <div class="stat-card">
-        <div class="stat-label">صفقات مفتوحة</div>
-        <div class="stat-value">${openSymbols.length}</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">معدل النجاح</div>
-        <div class="stat-value">${closed.length ? winRate.toFixed(1)+'%' : '--'}</div>
-        <div class="stat-sub">${wins.length} رابحة / ${losses.length} خاسرة</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">صافي الربح/الخسارة</div>
-        <div class="stat-value ${totalPnl>=0?'pos':'neg'}">${totalPnl>=0?'+':''}${fmtNum(totalPnl,2)}$</div>
-        <div class="stat-sub">${closed.length} صفقة مغلقة</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">نسبة التغير على رأس المال</div>
-        <div class="stat-value ${roiPct>=0?'pos':'neg'}">${roiPct>=0?'+':''}${fmtNum(roiPct,2)}%</div>
-        <div class="stat-sub">رأس المال: ${INITIAL_CAPITAL.toLocaleString('en-US')}$</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">الربح العائم</div>
-        <div class="stat-value ${floatingPnlKnown ? (floatingPnl>=0?'pos':'neg') : ''}">${floatingPnlKnown ? (floatingPnl>=0?'+':'')+fmtNum(floatingPnl,2)+'$' : '--'}</div>
-        <div class="stat-sub">${floatingPnlKnown ? (floatingPnl>=0?'+':'')+fmtNum((floatingPnl/INITIAL_CAPITAL)*100,2)+'%' : ''} ${openSymbols.length} صفقة مفتوحة</div>
-      </div>
-    </div>
+                                        <
+                                        div className = "grid grid-cols-1 lg:grid-cols-2 gap-3" >
+                                        <
+                                        div className = "stat-card" >
+                                        <
+                                        div className = "text-dim text-xs uppercase tracking-wider mb-2" > Equity Curve < /div> <
+                                        div className = "h-20 flex items-end gap-0.5 mono" >
+                                        {
+                                            EQUITY.slice(-60).map((p, i) => {
+                                                const max = Math.max(...EQUITY.slice(-60).map(p => p.equity));
+                                                const min = Math.min(...EQUITY.slice(-60).map(p => p.equity));
+                                                const rng = max - min || 1;
+                                                const h = ((p.equity - min) / rng) * 100;
+                                                const isGreen = p.equity >= EQUITY[0]?.equity;
+                                                return ( <
+                                                    div key = { i }
+                                                    className = "flex-1 rounded-sm"
+                                                    style = { { height: Math.max(3, h * 0.9),
+                                                            background: isGreen ? 'var(--color-neon)' : 'var(--color-loss)',
+                                                            opacity: 0.5 + (i / EQUITY.slice(-60).length) * 0.5 } }
+                                                    title = { `${usd(p.equity)} · dd ${p.drawdown.toFixed(2)}%` }
+                                                    />
+                                                );
+                                            })
+                                        } <
+                                        /div> <
+                                        div className = "flex justify-between text-faint text-[10px] mt-1" >
+                                        <
+                                        span > { dateTime(EQUITY[0]?.t || now) } < /span> <
+                                        span > Max DD: { Math.min(...EQUITY.map(p => p.drawdown)).toFixed(2) }% < /span> <
+                                        span > { dateTime(EQUITY[EQUITY.length - 1]?.t || now) } < /span> <
+                                        /div> <
+                                        /div>
 
-    <div class="section-title">الصفقات المفتوحة <span class="count">${openSymbols.length}</span></div>
-    ${posHtml}
+                                        <
+                                        div className = "stat-card" >
+                                        <
+                                        div className = "text-dim text-xs uppercase tracking-wider mb-2" > Recent Trades < /div> <
+                                        div className = "space-y-1.5" >
+                                        {
+                                            TRADES.slice(-5).reverse().map(t => ( <
+                                                div key = { t.id }
+                                                className = "flex items-center justify-between text-sm" >
+                                                <
+                                                div className = "flex items-center gap-2" >
+                                                <
+                                                span className = { `text-xs font-mono ${t.pnlUsd >= 0 ? 'text-neon' : 'text-loss'}` } >
+                                                { t.pnlUsd >= 0 ? < ArrowUp className = "w-3 h-3 inline" / > : < ArrowDown className =
+                                                    "w-3 h-3 inline" / > }
+                                                { usdSigned(t.pnlUsd) } <
+                                                /span> <
+                                                span className = "text-faint text-xs" > { t.symbol } < /span> <
+                                                span className = { `text-[10px] ${t.side === 'BUY' ? 'text-neon' : 'text-loss'}` } >
+                                                { t.side } < /span> <
+                                                /div> <
+                                                span className = "text-faint text-[10px]" > { timeAgo(t.exitTime) } < /span> <
+                                                /div>
+                                            ))
+                                        } <
+                                        /div> <
+                                        /div> <
+                                        /div>
 
-    <div class="section-title">
-      إحصائيات بدون حد
-      <span class="count">Shadow</span>
-    </div>
-    <div class="shadow-note">لو ما فيه حد على عدد الصفقات المتزامنة - يتحدّث تلقائيًا، وما يأثر على الأرقام الحقيقية فوق</div>
-    <div class="stats-grid shadow-grid">
-      <div class="stat-card shadow-card">
-        <div class="stat-label">صفقات مفتوحة (بدون حد)</div>
-        <div class="stat-value">${shadowOpenCount}</div>
-        <div class="stat-sub">معلّقة: ${shadowPendingCount}</div>
-      </div>
-      <div class="stat-card shadow-card">
-        <div class="stat-label">معدل النجاح</div>
-        <div class="stat-value">${shadowClosed.length ? shadowWinRate.toFixed(1)+'%' : '--'}</div>
-        <div class="stat-sub">${shadowWins.length} رابحة / ${shadowLosses.length} خاسرة</div>
-      </div>
-      <div class="stat-card shadow-card">
-        <div class="stat-label">صافي الربح/الخسارة</div>
-        <div class="stat-value ${shadowTotalPnl>=0?'pos':'neg'}">${shadowTotalPnl>=0?'+':''}${fmtNum(shadowTotalPnl,2)}$</div>
-        <div class="stat-sub">${shadowClosed.length} صفقة مغلقة</div>
-      </div>
-      <div class="stat-card shadow-card">
-        <div class="stat-label">نسبة التغير على رأس المال</div>
-        <div class="stat-value ${shadowRoiPct>=0?'pos':'neg'}">${shadowRoiPct>=0?'+':''}${fmtNum(shadowRoiPct,2)}%</div>
-        <div class="stat-sub">الرصيد الافتراضي: ${fmtNum(shadowBalance,2)}$</div>
-      </div>
-    </div>
+                                        <
+                                        div className = "stat-card" >
+                                        <
+                                        div className = "text-dim text-xs uppercase tracking-wider mb-2" > Activity Ticker < /div> <
+                                        div className = "activity-ticker" >
+                                        <
+                                        div className = "ticker-track" > {
+                                            ACTIVITY.slice(0, 12).map(a => ( <
+                                                span key = { a.id }
+                                                className = "ticker-item" >
+                                                <
+                                                span className = "highlight" > { a.symbol || "BOT" } < /span> 
+                                                { a.message } 
+                                                <
+                                                span className = "text-faint" > { a.detail } < /span> 
+                                                <
+                                                span className = "text-faint text-[10px]" > { timeAgo(a.time) } < /span> <
+                                                /span>
+                                            ))
+                                        } <
+                                        /div> <
+                                        /div> <
+                                        /div> <
+                                        /div>
+                                    );
+                                }
 
-    <div class="section-title">الصفقات المعلقة <span class="count">${pendingSymbols.length}</span></div>
-    ${pendingHtml}
+                                // Positions
+                                function PositionsView() {
+                                    const [expanded, setExpanded] = useState(null);
+                                    return ( <
+                                            div className = "space-y-4" >
+                                            <
+                                            div className = "flex items-center justify-between" >
+                                            <
+                                            h1 className = "text-xl font-bold tracking-tight" > Open Positions < /h1> <
+                                            span className = "text-dim text-xs" > { POSITIONS.length } active < /span> <
+                                            /div> {
+                                                POSITIONS.length === 0 ? ( <
+                                                    div className = "stat-card text-center text-dim py-8" >
+                                                    No open positions <
+                                                    /div>
+                                                ) : ( <
+                                                    div className = "grid grid-cols-1 gap-3" > {
+                                                        POSITIONS.map(pos => {
+                                                            const pnlPct = ((pos.current - pos.entry) / pos.entry) *
+                                                            100 * (pos.side === "BUY" ? 1 : -1);
+                                                            const pnlUsd = (pnlPct / 100) * pos.sizeUsd;
+                                                            const isGreen = pnlUsd >= 0;
+                                                            const isExpanded = expanded === pos.id;
+                                                            return ( <
+                                                                div key = { pos.id }
+                                                                className = { `stat-card cursor-pointer transition-all ${isExpanded ? 'border-neon/30' : ''}` }
+                                                                onClick = {
+                                                                    () => setExpanded(isExpanded ? null : pos.id) } >
+                                                                <
+                                                                div className = "flex items-center justify-between" >
+                                                                <
+                                                                div className = "flex items-center gap-3" >
+                                                                <
+                                                                div className = { `w-2 h-2 rounded-full ${pos.side === 'BUY' ? 'bg-neon' : 'bg-loss'}` } >
+                                                                < /div> <
+                                                                span className = "font-bold" > { pos.symbol } < /span> <
+                                                                span className = { `text-xs font-mono ${pos.side === 'BUY' ? 'text-neon' : 'text-loss'}` } >
+                                                                { pos.side } < /span> <
+                                                                span className = "text-faint text-xs" > Score { pos.score } < /span> <
+                                                                /div> <
+                                                                div className = "flex items-center gap-4" >
+                                                                <
+                                                                span className = "text-dim text-xs" > { price(pos.current) } < /span> <
+                                                                span className = { `font-mono text-sm ${isGreen ? 'text-neon' : 'text-loss'}` } >
+                                                                { usdSigned(pnlUsd) } <
+                                                                /span> <
+                                                                span className = { `text-xs ${isGreen ? 'text-neon' : 'text-loss'}` } >
+                                                                { pct(pnlPct) } <
+                                                                /span> <
+                                                                ChevronRight className = { `w-4 h-4 text-dim transition-transform ${isExpanded ? 'rotate-90' : ''}` }
+                                                                /> <
+                                                                /div> <
+                                                                /div> {
+                                                                    isExpanded && ( <
+                                                                        div className = "mt-3 pt-3 border-t border-line/50" >
+                                                                        <
+                                                                        div className = "grid grid-cols-2 md:grid-cols-4 gap-3 text-sm" >
+                                                                        <
+                                                                        div > < span className = "text-dim" > Entry < /span> 
+                                                                        < span className = "font-mono" > { price(pos.entry) } < /span> < /div> <
+                                                                        div > < span className = "text-dim" > TP < /span> 
+                                                                        < span className = "font-mono text-neon" > { price(pos.tp) } < /span> < /div> <
+                                                                        div > < span className = "text-dim" > SL < /span> 
+                                                                        < span className = "font-mono text-loss" > { price(pos.sl) } < /span> < /div> <
+                                                                        div > < span className = "text-dim" > Size < /span> 
+                                                                        < span className = "font-mono" > { usd(pos.sizeUsd) } < /span> < /div> <
+                                                                        /div> <
+                                                                        div className = "mt-2" >
+                                                                        <
+                                                                        MiniCandleChart candles = { pos.candles }
+                                                                        side = { pos.side }
+                                                                        /> <
+                                                                        /div> <
+                                                                        /div>
+                                                                    )
+                                                                } <
+                                                                /div>
+                                                            );
+                                                        })
+                                                    } <
+                                                    /div>
+                                                )
+                                            } <
+                                            /div>
+                                        );
+                                    }
 
-    <div class="section-title">سجل الصفقات <span class="count">${closed.length}</span></div>
-    <div class="filter-row" id="filterRow">
-      <button class="filter-btn active" data-f="all">الكل</button>
-      <button class="filter-btn" data-f="tp">أهداف</button>
-      <button class="filter-btn" data-f="sl">وقف خسارة</button>
-      <button class="filter-btn" data-f="timeout">انتهاء وقت</button>
-    </div>
-    <div id="tradeList">${tradeRowsHtml('all')}</div>
-  `;
+                                    // History
+                                    function HistoryView() {
+                                        const [filter, setFilter] = useState("all");
+                                        const filtered = filter === "all" ? TRADES : TRADES.filter(t => t.side === filter);
+                                        const sorted = [...filtered].sort((a, b) => b.exitTime - a.exitTime);
+                                        return ( <
+                                                div className = "space-y-4" >
+                                                <
+                                                div className = "flex items-center justify-between flex-wrap gap-2" >
+                                                <
+                                                h1 className = "text-xl font-bold tracking-tight" > Trade History < /h1> <
+                                                div className = "flex gap-2" >
+                                                <
+                                                button onClick = { () => setFilter("all") }
+                                                className = { cn("px-3 py-1 text-xs rounded-full border border-line/50 transition",
+                                                        filter === "all" ? "bg-neon/10 border-neon/30 text-neon" :
+                                                        "hover:bg-panel-2") } >
+                                                All <
+                                                /button> <
+                                                button onClick = { () => setFilter("BUY") }
+                                                className = { cn("px-3 py-1 text-xs rounded-full border border-line/50 transition",
+                                                        filter === "BUY" ? "bg-neon/10 border-neon/30 text-neon" :
+                                                        "hover:bg-panel-2") } >
+                                                Buy <
+                                                /button> <
+                                                button onClick = { () => setFilter("SELL") }
+                                                className = { cn("px-3 py-1 text-xs rounded-full border border-line/50 transition",
+                                                        filter === "SELL" ? "bg-loss/10 border-loss/30 text-loss" :
+                                                        "hover:bg-panel-2") } >
+                                                Sell <
+                                                /button> <
+                                                /div> <
+                                                /div> <
+                                                div className = "overflow-x-auto" >
+                                                <
+                                                table className = "w-full text-sm" >
+                                                <
+                                                thead >
+                                                <
+                                                tr className = "text-faint border-b border-line" >
+                                                <
+                                                th className = "text-left py-2 px-2" > Symbol < /th> <
+                                                th className = "text-left py-2 px-2" > Side < /th> <
+                                                th className = "text-right py-2 px-2" > Entry < /th> <
+                                                th className = "text-right py-2 px-2" > Exit < /th> <
+                                                th className = "text-right py-2 px-2" > P&L < /th> <
+                                                th className = "text-right py-2 px-2" > ROI < /th> <
+                                                th className = "text-right py-2 px-2" > Duration < /th> <
+                                                th className = "text-right py-2 px-2" > Reason < /th> <
+                                                /tr> <
+                                                /thead> <
+                                                tbody > {
+                                                    sorted.slice(0, 50).map(t => ( <
+                                                        tr key = { t.id }
+                                                        className = "border-b border-line/30 hover:bg-panel-2/50 transition" >
+                                                        <
+                                                        td className = "py-2 px-2 font-medium" > { t.symbol } < /td> <
+                                                        td className = { `py-2 px-2 text-xs ${t.side === 'BUY' ? 'text-neon' : 'text-loss'}` } >
+                                                        { t.side } <
+                                                        /td> <
+                                                        td className = "py-2 px-2 text-right font-mono" > { price(t.entry) } < /td> <
+                                                        td className = "py-2 px-2 text-right font-mono" > { price(t.exit) } < /td> <
+                                                        td className = { `py-2 px-2 text-right font-mono ${t.pnlUsd >= 0 ? 'text-neon' : 'text-loss'}` } >
+                                                        { usdSigned(t.pnlUsd) } <
+                                                        /td> <
+                                                        td className = { `py-2 px-2 text-right ${t.pnlPct >= 0 ? 'text-neon' : 'text-loss'}` } >
+                                                        { pct(t.pnlPct) } <
+                                                        /td> <
+                                                        td className = "py-2 px-2 text-right text-faint text-xs" > { duration(t.durationMin) } < /td> <
+                                                        td className = "py-2 px-2 text-right text-xs" >
+                                                        <
+                                                        span className = { cn("px-2 py-0.5 rounded-full",
+                                                                t.reason === "TP" ? "bg-neon/20 text-neon" :
+                                                                t.reason === "SL" ? "bg-loss/20 text-loss" :
+                                                                "bg-warn/20 text-warn") } >
+                                                        { t.reason } <
+                                                        /span> <
+                                                        /td> <
+                                                        /tr>
+                                                    ))
+                                                } <
+                                                /tbody> <
+                                                /table> <
+                                                /div> <
+                                                div className = "text-faint text-xs text-center" >
+                                                Showing { Math.min(sorted.length, 50) } of { sorted.length } trades <
+                                                /div> <
+                                                /div>
+                                            );
+                                        }
 
-  document.getElementById('filterRow').addEventListener('click', (e) => {
-    const btn = e.target.closest('.filter-btn');
-    if(!btn) return;
-    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    document.getElementById('tradeList').innerHTML = tradeRowsHtml(btn.dataset.f);
-  });
-}
+                                        // Scanner
+                                        function ScannerView() {
+                                            return ( <
+                                                    div className = "space-y-4" >
+                                                    <
+                                                    div className = "flex items-center justify-between" >
+                                                    <
+                                                    h1 className = "text-xl font-bold tracking-tight" > Market Scanner < /h1> <
+                                                    span className = "text-dim text-xs" > { SCANNER.length } assets < /span> <
+                                                    /div> <
+                                                    div className = "overflow-x-auto" >
+                                                    <
+                                                    table className = "w-full text-sm" >
+                                                    <
+                                                    thead >
+                                                    <
+                                                    tr className = "text-faint border-b border-line" >
+                                                    <
+                                                    th className = "text-left py-2 px-2" > Symbol < /th> <
+                                                    th className = "text-right py-2 px-2" > Price < /th> <
+                                                    th className = "text-right py-2 px-2" > 24h % < /th> <
+                                                    th className = "text-right py-2 px-2" > Volume < /th> <
+                                                    th className = "text-center py-2 px-2" > Signal < /th> <
+                                                    th className = "text-right py-2 px-2" > Score < /th> <
+                                                    th className = "text-right py-2 px-2" > RSI < /th> <
+                                                    th className = "text-center py-2 px-2" > Status < /th> <
+                                                    /tr> <
+                                                    /thead> <
+                                                    tbody > {
+                                                        SCANNER.map(row => {
+                                                            const isBuy = row.signal === "BUY";
+                                                            const isSell = row.signal === "SELL";
+                                                            const isNeutral = row.signal === "NEUTRAL";
+                                                            const statusColor = row.status === "Signal" ? "bg-neon/20 text-neon" :
+                                                                row.status === "In Trade" ? "bg-warn/20 text-warn" :
+                                                                "bg-faint/20 text-faint";
+                                                            return ( <
+                                                                tr key = { row.symbol }
+                                                                className = "border-b border-line/30 hover:bg-panel-2/50 transition" >
+                                                                <
+                                                                td className = "py-2 px-2 font-medium" > { row.symbol } < /td> <
+                                                                td className = "py-2 px-2 text-right font-mono" > { price(row.price) } < /td> <
+                                                                td className = { `py-2 px-2 text-right ${row.change24h >= 0 ? 'text-neon' : 'text-loss'}` } >
+                                                                { pct(row.change24h) } <
+                                                                /td> <
+                                                                td className = "py-2 px-2 text-right font-mono text-dim text-xs" > { compact(row.volume) } < /td> <
+                                                                td className = "py-2 px-2 text-center" >
+                                                                <
+                                                                span className = { cn("text-xs font-bold px-2 py-0.5 rounded-full",
+                                                                        isBuy ? "bg-neon/20 text-neon" :
+                                                                        isSell ? "bg-loss/20 text-loss" :
+                                                                        "bg-warn/20 text-warn") } >
+                                                                { row.signal } <
+                                                                /span> <
+                                                                /td> <
+                                                                td className = "py-2 px-2 text-right font-mono" >
+                                                                <
+                                                                span className = { cn(row.score >= 70 ? "text-neon" :
+                                                                        row.score >= 40 ? "text-warn" : "text-loss") } >
+                                                                { row.score } <
+                                                                /span> <
+                                                                /td> <
+                                                                td className = "py-2 px-2 text-right font-mono" > { row.rsi.toFixed(1) } < /td> <
+                                                                td className = "py-2 px-2 text-center" >
+                                                                <
+                                                                span className = { cn("text-xs px-2 py-0.5 rounded-full",
+                                                                        statusColor) } >
+                                                                { row.status } <
+                                                                /span> <
+                                                                /td> <
+                                                                /tr>
+                                                            );
+                                                        })
+                                                    } <
+                                                    /tbody> <
+                                                    /table> <
+                                                    /div> <
+                                                    /div>
+                                                );
+                                            }
 
-// ---- تحديث حي تلقائي بينما الصفحة مفتوحة ----
-// كل REFRESH_MS نعيد الجلب والعرض. لو التبويب مو ظاهر (المستخدم بتبويب/تطبيق تاني)
-// نوقف التحديث مؤقتًا لتوفير الطلبات، ونرجع نجيب فورًا لحظة ما يرجع يفتح الصفحة.
-const REFRESH_MS = 20000; // 20 ثانية - عدّلها لو بدك أسرع/أبطأ
-let refreshTimer = null;
+                                            // Signals
+                                            function SignalsView() {
+                                                return ( <
+                                                        div className = "space-y-4" >
+                                                        <
+                                                        div className = "flex items-center justify-between" >
+                                                        <
+                                                        h1 className = "text-xl font-bold tracking-tight" > Signals < /h1> <
+                                                        span className = "text-dim text-xs" > { SIGNALS.length } total < /span> <
+                                                        /div> <
+                                                        div className = "grid grid-cols-1 md:grid-cols-2 gap-3" > {
+                                                            SIGNALS.map(sig => {
+                                                                const isBuy = sig.side === "BUY";
+                                                                const statusColors = {
+                                                                    "New": "bg-neon/20 text-neon",
+                                                                    "Waiting": "bg-warn/20 text-warn",
+                                                                    "Triggered": "bg-info/20 text-info",
+                                                                    "Opened": "bg-violet/20 text-violet",
+                                                                    "TP Hit": "bg-neon/20 text-neon",
+                                                                    "SL Hit": "bg-loss/20 text-loss",
+                                                                    "Expired": "bg-faint/20 text-faint"
+                                                                };
+                                                                return ( <
+                                                                    div key = { sig.id }
+                                                                    className = "stat-card flex items-center justify-between" >
+                                                                    <
+                                                                    div className = "flex items-center gap-3" >
+                                                                    <
+                                                                    div className = { `w-2 h-2 rounded-full ${isBuy ? 'bg-neon' : 'bg-loss'}` } >
+                                                                    < /div> <
+                                                                    div >
+                                                                    <
+                                                                    div className = "font-bold" > { sig.symbol } < /div> <
+                                                                    div className = "text-faint text-xs" >
+                                                                    { sig.side } · Score { sig.score } · RR { sig.rr.toFixed(2) } <
+                                                                    /div> <
+                                                                    /div> <
+                                                                    /div> <
+                                                                    div className = "text-right" >
+                                                                    <
+                                                                    div className = { cn("text-xs px-2 py-0.5 rounded-full inline-block",
+                                                                            statusColors[sig.status] || "bg-faint/20 text-faint") } >
+                                                                    { sig.status } <
+                                                                    /div> <
+                                                                    div className = "text-faint text-[10px] mt-1" > { timeAgo(sig.time) } < /div> <
+                                                                    /div> <
+                                                                    /div>
+                                                                );
+                                                            })
+                                                        } <
+                                                        /div> <
+                                                        /div>
+                                                    );
+                                                }
 
-function startAutoRefresh(){
-  if(refreshTimer) return;
-  refreshTimer = setInterval(load, REFRESH_MS);
-}
-function stopAutoRefresh(){
-  if(!refreshTimer) return;
-  clearInterval(refreshTimer);
-  refreshTimer = null;
-}
+                                                // Activity
+                                                function ActivityView() {
+                                                    return ( <
+                                                            div className = "space-y-4" >
+                                                            <
+                                                            div className = "flex items-center justify-between" >
+                                                            <
+                                                            h1 className = "text-xl font-bold tracking-tight" > Bot Activity < /h1> <
+                                                            span className = "text-dim text-xs" > { ACTIVITY.length } events < /span> <
+                                                            /div> <
+                                                            div className = "space-y-1.5" > {
+                                                                ACTIVITY.map(a => {
+                                                                    const icons = {
+                                                                        signal: < Zap className = "w-4 h-4 text-violet" / > ,
+                                                                            open: < Wallet className = "w-4 h-4 text-neon" / > ,
+                                                                            price: < TrendingUp className = "w-4 h-4 text-info" / > ,
+                                                                            tp: < CheckCircle className = "w-4 h-4 text-neon" / > ,
+                                                                            sl: < X className = "w-4 h-4 text-loss" / > ,
+                                                                            info: < Activity className = "w-4 h-4 text-dim" / > ,
+                                                                    };
+                                                                    return ( <
+                                                                        div key = { a.id }
+                                                                        className = "flex items-center gap-3 text-sm py-2 border-b border-line/30" >
+                                                                        <
+                                                                        div className = "w-6 h-6 flex items-center justify-center" >
+                                                                        { icons[a.type] || < Activity className = "w-4 h-4 text-dim" / > } <
+                                                                        /div> <
+                                                                        div className = "flex-1" >
+                                                                        <
+                                                                        span className = "text-faint" > { a.symbol ? a.symbol + " " : "" } < /span> { a.message } <
+                                                                        span className = "text-dim text-xs ml-1" > { a.detail } < /span> <
+                                                                        /div> <
+                                                                        span className = "text-faint text-[10px]" > { timeAgo(a.time) } < /span> <
+                                                                        /div>
+                                                                    );
+                                                                })
+                                                            } <
+                                                            /div> <
+                                                            /div>
+                                                        );
+                                                    }
 
-document.addEventListener('visibilitychange', () => {
-  if(document.hidden){
-    stopAutoRefresh();
-  }else{
-    load();          // تحديث فوري لحظة الرجوع للتبويب (بدل ما نستنى دورة كاملة)
-    startAutoRefresh();
-  }
-});
+                                                    // Alerts
+                                                    function AlertsView() {
+                                                        const [alerts, setAlerts] = useState(ALERTS);
+                                                        const unread = alerts.filter(a => !a.read).length;
+                                                        const markAllRead = () => {
+                                                            setAlerts(alerts.map(a => ({ ...a, read: true })));
+                                                        };
+                                                        return ( <
+                                                                div className = "space-y-4" >
+                                                                <
+                                                                div className = "flex items-center justify-between" >
+                                                                <
+                                                                h1 className = "text-xl font-bold tracking-tight" > Alerts < /h1> <
+                                                                div className = "flex items-center gap-2" >
+                                                                {
+                                                                    unread > 0 && ( <
+                                                                        button onClick = { markAllRead }
+                                                                        className = "text-xs text-dim hover:text-ink transition" >
+                                                                        Mark all read <
+                                                                        /button>
+                                                                    )
+                                                                } <
+                                                                span className = "text-dim text-xs" > { unread } unread < /span> <
+                                                                /div> <
+                                                                /div> <
+                                                                div className = "space-y-2" > {
+                                                                    alerts.map(a => {
+                                                                        const severityColors = {
+                                                                            info: "border-info/20 bg-info/5",
+                                                                            success: "border-neon/20 bg-neon/5",
+                                                                            warn: "border-warn/20 bg-warn/5",
+                                                                            error: "border-loss/20 bg-loss/5"
+                                                                        };
+                                                                        const severityDots = {
+                                                                            info: "bg-info",
+                                                                            success: "bg-neon",
+                                                                            warn: "bg-warn",
+                                                                            error: "bg-loss"
+                                                                        };
+                                                                        return ( <
+                                                                            div key = { a.id }
+                                                                            className = { cn("stat-card flex items-start gap-3 border-l-4 transition-opacity",
+                                                                                    severityColors[a.severity],
+                                                                                    a.read ? "opacity-60" : "") }
+                                                                            style = { { borderLeftColor: `var(--color-${a.severity === 'success' ? 'neon' : a.severity === 'error' ? 'loss' : a.severity === 'warn' ? 'warn' : 'info'})` } } >
+                                                                            <
+                                                                            div className = { `w-2 h-2 rounded-full mt-1 ${severityDots[a.severity]}` } >
+                                                                            < /div> <
+                                                                            div className = "flex-1" >
+                                                                            <
+                                                                            div className = "font-medium text-sm" > { a.title } < /div> <
+                                                                            div className = "text-dim text-xs" > { a.body } < /div> <
+                                                                            /div> <
+                                                                            div className = "text-faint text-[10px] whitespace-nowrap" > { timeAgo(a.time) } < /div> <
+                                                                            /div>
+                                                                        );
+                                                                    })
+                                                                } <
+                                                                /div> <
+                                                                /div>
+                                                            );
+                                                        }
 
-load();
-startAutoRefresh();
-</script>
+                                                        // Placeholder
+                                                        function PlaceholderView({ title, icon: Icon }) {
+                                                            return ( <
+                                                                    div className = "flex flex-col items-center justify-center h-64 text-center" >
+                                                                    <
+                                                                    Icon className = "w-12 h-12 text-dim/30 mb-3" / >
+                                                                    <
+                                                                    h2 className = "text-xl font-medium text-dim" > { title } < /h2> <
+                                                                    p className = "text-faint text-sm mt-1" > Module under construction < /p> <
+                                                                    /div>
+                                                                );
+                                                            }
 
+                                                            // ----- 7. RENDER -----
+                                                            const root = document.getElementById("root");
+                                                            if (root) {
+                                                                createRoot(root).render( < App / > );
+                                                            } else {
+                                                                console.error("Root element not found");
+                                                            }
+    </script>
 </body>
 </html>
