@@ -4,6 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Scalping Talal Bot — Trading Terminal</title>
+<link rel="manifest" href="./manifest.webmanifest">
+<meta name="theme-color" content="#070b0a">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Talal Bot">
+<link rel="apple-touch-icon" href="./icon-512.png">
+<link rel="icon" type="image/png" href="./icon-512.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -167,10 +175,7 @@
   .fmid .tm{font-family:var(--mono);font-size:10px;color:var(--faint);margin-top:1px}
   .fdet{font-family:var(--mono);font-size:11.5px;font-weight:600;flex:0 0 auto}
 
-  /* ===== Shadow ===== */
-  .shadow-note{font-size:11.5px;color:var(--faint);line-height:1.6;margin-bottom:12px}
-  .kpi.sh{border-color:rgba(167,139,250,.22)}
-  .kpi.sh .kpi-label{color:var(--violet)}
+
 
   /* ===== Filters + table ===== */
   .filters{display:flex;gap:7px;overflow-x:auto;padding-bottom:2px}
@@ -273,7 +278,6 @@ const INITIAL_CAPITAL = 10000;
 const REFRESH_MS = 15000;
 function STATE_URL(){ return "./state.json?_=" + Date.now(); }
 function TRADES_URL(){ return "./trades_log.csv?_=" + Date.now(); }
-function SHADOW_TRADES_URL(){ return "./shadow_trades_log.csv?_=" + Date.now(); }
 
 const app = document.getElementById('app');
 const bannerEl = document.getElementById('banner');
@@ -281,7 +285,7 @@ const overlay = document.getElementById('overlay');
 const modal = document.getElementById('modal');
 
 /* ============ STATE (للواجهة فقط، لا يمس بياناتك) ============ */
-let LAST = { state:null, trades:[], shadow:[], prices:{} };
+let LAST = { state:null, trades:[], prices:{} };
 let UI = { period:'ALL', filter:'all', search:'', openModal:null };
 let prevVals = {};   // لتأثير الأرقام المتحركة
 let firstLoad = true;
@@ -349,16 +353,18 @@ function posStrat(p){ return p.strategy||p.strategy_name||p.setup||''; }
 /* ============ STATS ============ */
 function buildEquity(closed){
   // closed = الأحدث أولًا → نعكس ليصير زمنيًا
+  // الحساب = رأس المال الابتدائي + مجموع أرباح الصفقات المغلقة (مصدر واحد موثوق)
   const chrono=[...closed].reverse();
-  const pts=[]; let cum=INITIAL_CAPITAL;
-  pts.push(INITIAL_CAPITAL);
-  for(const t of chrono){
-    const bal=num(t.balance);
-    if(bal!=null){ cum=bal; }
-    else if(!isNaN(t.pnl_dollars)){ cum+=t.pnl_dollars; }
-    pts.push(cum);
-  }
-  return pts;
+  const vals=[INITIAL_CAPITAL];
+  const times=[];
+  let cum=INITIAL_CAPITAL;
+  chrono.forEach((t,i)=>{
+    if(i===0)times.push(new Date(t.signal_time).getTime()||Date.now());
+    if(!isNaN(t.pnl_dollars))cum+=t.pnl_dollars;
+    vals.push(cum);
+    times.push(new Date(t.exit_time).getTime()||Date.now());
+  });
+  return {vals,times};
 }
 function maxDrawdown(series){
   let peak=-Infinity, mdd=0;
@@ -374,18 +380,17 @@ function computeStats(trades){
   const grossW=wins.reduce((s,t)=>s+t.pnl_dollars,0);
   const grossL=Math.abs(losses.reduce((s,t)=>s+t.pnl_dollars,0));
   const pf=grossL?grossW/grossL:grossW;
-  const lastBal=closed.length?num(closed[0].balance):null;
-  const equity=lastBal!=null?lastBal:INITIAL_CAPITAL+totalPnl;
+  const equity=INITIAL_CAPITAL+totalPnl;
   const roi=(totalPnl/INITIAL_CAPITAL)*100;
   const best=closed.length?Math.max(...closed.map(t=>t.pnl_dollars)):0;
   const worst=closed.length?Math.min(...closed.map(t=>t.pnl_dollars)):0;
   const avg=closed.length?totalPnl/closed.length:0;
-  const eqSeries=buildEquity(closed);
+  const {vals:eqSeries,times:eqTimes}=buildEquity(closed);
   const mdd=maxDrawdown(eqSeries);
   // اليوم
   const t0=new Date(); t0.setHours(0,0,0,0);
   const todayPnl=closed.filter(t=>{const d=new Date(t.exit_time).getTime();return !isNaN(d)&&d>=t0.getTime();}).reduce((s,t)=>s+t.pnl_dollars,0);
-  return {closed,wins,losses,winRate,totalPnl,pf,equity,roi,best,worst,avg,mdd,todayPnl,eqSeries,grossW,grossL,
+  return {closed,wins,losses,winRate,totalPnl,pf,equity,roi,best,worst,avg,mdd,todayPnl,eqSeries,eqTimes,grossW,grossL,
     avgWin:wins.length?grossW/wins.length:0, avgLoss:losses.length?grossL/losses.length:0};
 }
 
@@ -402,33 +407,47 @@ function sparkSvg(series,color,h=26){
     <path d="${line} L${W},${h} L0,${h} Z" fill="url(#${id})"/>
     <path d="${line}" fill="none" stroke="${color}" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
 }
-function equitySvg(series){
+function equitySvg(series,times){
   if(!series||series.length<2)return `<div style="color:var(--faint);font-family:var(--mono);font-size:12px;padding:60px 0;text-align:center">لا توجد بيانات كافية بعد</div>`;
-  const W=800,H=230,PADX=6,PADT=12,PADB=22;
+  const H=230,PT=5,PB=5;
   const min=Math.min(...series),max=Math.max(...series); const sp=(max-min)||1;
-  const stepX=(W-PADX*2)/(series.length-1);
-  const pts=series.map((v,i)=>[PADX+i*stepX, H-PADB-((v-min)/sp)*(H-PADT-PADB)]);
-  const line=pts.map((p,i)=>(i?'L':'M')+p[0].toFixed(1)+','+p[1].toFixed(1)).join(' ');
-  const area=line+` L${pts[pts.length-1][0].toFixed(1)},${H-PADB} L${pts[0][0].toFixed(1)},${H-PADB} Z`;
+  const Y=v=>PT+(H-PT-PB)-((v-min)/sp)*(H-PT-PB);
+  const pts=series.map((v,i)=>[(i/(series.length-1))*100, Y(v)]);
+  const line=pts.map((p,i)=>(i?'L':'M')+p[0].toFixed(2)+','+p[1].toFixed(1)).join(' ');
+  const area=line+` L100,${H-PB} L0,${H-PB} Z`;
   const rising=series[series.length-1]>=series[0];
   const col=rising?'#3ddc84':'#ff5c5c';
-  // خط رأس المال الابتدائي
-  const capY=H-PADB-((INITIAL_CAPITAL-min)/sp)*(H-PADT-PADB);
-  const capLine=(INITIAL_CAPITAL>=min&&INITIAL_CAPITAL<=max)?`<line x1="${PADX}" x2="${W-PADX}" y1="${capY.toFixed(1)}" y2="${capY.toFixed(1)}" stroke="#4d5f57" stroke-dasharray="5 5" stroke-width="1"/>`:'';
-  const grid=[.25,.5,.75].map(f=>`<line x1="${PADX}" x2="${W-PADX}" y1="${(PADT+f*(H-PADT-PADB)).toFixed(1)}" y2="${(PADT+f*(H-PADT-PADB)).toFixed(1)}" stroke="#16211d"/>`).join('');
-  return `<svg class="eq-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
-    <defs><linearGradient id="eqg" x1="0" y1="0" x2="0" y2="1">
-    <stop offset="0%" stop-color="${col}" stop-opacity=".3"/><stop offset="100%" stop-color="${col}" stop-opacity="0"/></linearGradient></defs>
-    ${grid}${capLine}
-    <path d="${area}" fill="url(#eqg)"/>
-    <path d="${line}" fill="none" stroke="${col}" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>
-    <circle cx="${pts[pts.length-1][0].toFixed(1)}" cy="${pts[pts.length-1][1].toFixed(1)}" r="3.5" fill="${col}"/>
-  </svg>`;
+  const capY=Y(INITIAL_CAPITAL);
+  const capLine=(INITIAL_CAPITAL>=min&&INITIAL_CAPITAL<=max)?`<line x1="0" x2="100" y1="${capY.toFixed(1)}" y2="${capY.toFixed(1)}" stroke="#4d5f57" stroke-dasharray="1.2 1.2" stroke-width=".5"/>`:'';
+  const grid=[.25,.5,.75].map(f=>`<line x1="0" x2="100" y1="${(PT+f*(H-PT-PB)).toFixed(1)}" y2="${(PT+f*(H-PT-PB)).toFixed(1)}" stroke="#16211d" stroke-width=".5"/>`).join('');
+  const mid=(max+min)/2;
+  const fmtD=t=>{const d=new Date(t);if(isNaN(d))return'';const p=x=>String(x).padStart(2,'0');return `${p(d.getDate())}/${p(d.getMonth()+1)}`;};
+  const t0=times&&times.length?fmtD(times[0]):'';
+  const t1=times&&times.length?fmtD(times[times.length-1]):'';
+  return `<div>
+    <div style="display:flex;gap:8px;align-items:stretch">
+      <svg viewBox="0 0 100 ${H}" preserveAspectRatio="none" style="flex:1;height:230px;display:block;min-width:0">
+        <defs><linearGradient id="eqg" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="${col}" stop-opacity=".3"/><stop offset="100%" stop-color="${col}" stop-opacity="0"/></linearGradient></defs>
+        ${grid}${capLine}
+        <path d="${area}" fill="url(#eqg)"/>
+        <path d="${line}" fill="none" stroke="${col}" stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke" style="stroke-width:2.2px"/>
+        <circle cx="${pts[pts.length-1][0].toFixed(2)}" cy="${pts[pts.length-1][1].toFixed(1)}" r="1.2" fill="${col}"/>
+      </svg>
+      <div class="mono" style="display:flex;flex-direction:column;justify-content:space-between;font-size:9.5px;color:var(--faint);padding:1px 0">
+        <span>${money(max,0)}</span><span>${money(mid,0)}</span><span>${money(min,0)}</span>
+      </div>
+    </div>
+    <div class="mono" style="display:flex;justify-content:space-between;font-size:9.5px;color:var(--faint);margin-top:6px">
+      <span>${t0}</span><span style="color:${col}">● الآن</span><span>${t1}</span>
+    </div>
+  </div>`;
 }
-function periodSlice(series){
-  const map={'7D':8,'1M':31,'3M':91,'6M':181,'1Y':366,'ALL':series.length};
-  const n=map[UI.period]||series.length;
-  return series.slice(Math.max(0,series.length-n));
+function periodSlice(vals,times){
+  const map={'7D':8,'1M':31,'3M':91,'6M':181,'1Y':366,'ALL':vals.length};
+  const n=map[UI.period]||vals.length;
+  const start=Math.max(0,vals.length-n);
+  return {vals:vals.slice(start),times:(times||[]).slice(start)};
 }
 
 /* ============ POSITION PnL ============ */
@@ -456,7 +475,7 @@ function kpiCard(label,valHtml,ic,foot,cls,key,rawVal,tone){
 }
 
 function render(){
-  const {state,trades,shadow,prices}=LAST;
+  const {state,trades,prices}=LAST;
   const st=computeStats(trades);
 
   // ---- open positions + floating ----
@@ -494,7 +513,7 @@ function render(){
   </div>`;
 
   // ===== Equity + Activity =====
-  const eqSeries = periodSlice(sparkFull);
+  const {vals:eqVals,times:eqTms} = periodSlice(sparkFull, st.eqTimes);
   const equitySec = `<div class="panel">
     <div class="eq-head">
       <div>
@@ -509,7 +528,7 @@ function render(){
         ${['7D','1M','3M','6M','1Y','ALL'].map(p=>`<button data-p="${p}" class="${UI.period===p?'on':''}">${p}</button>`).join('')}
       </div>
     </div>
-    ${equitySvg(eqSeries)}
+    ${equitySvg(eqVals, eqTms)}
   </div>`;
 
   const activitySec = `<div class="panel">
@@ -525,9 +544,6 @@ function render(){
   const posSec = openSyms.length
     ? `<div class="pos-grid">${openSyms.map(sym=>positionCard(sym,openPos[sym],prices[sym])).join('')}</div>`
     : `<div class="empty">لا توجد صفقات مفتوحة حاليًا 🌙</div>`;
-
-  // ===== Shadow =====
-  const shadowSec = shadowSection(state, shadow);
 
   // ===== Pending =====
   const pendingSec = pendingSection(state);
@@ -545,7 +561,6 @@ function render(){
     <div class="sec"><div class="sec-t"><span class="ic">📂</span>الصفقات المفتوحة</div><span class="count">${openSyms.length}</span></div>
     ${posSec}
     ${pendingSec}
-    ${shadowSec}
     ${histSec}
   `;
 
@@ -641,29 +656,6 @@ function activityFeed(trades, openPos, prices){
     </div>`;
   }).join('');
   return `<div class="feed no-sb">${rows||'<div class="empty">لا يوجد نشاط بعد</div>'}</div>`;
-}
-
-function shadowSection(state,shadow){
-  const closed=shadow.filter(t=>!isNaN(t.pnl_dollars));
-  if(!state && closed.length===0) return '';
-  const wins=closed.filter(t=>t.pnl_dollars>0);
-  const wr=closed.length?wins.length/closed.length*100:0;
-  const total=closed.reduce((s,t)=>s+t.pnl_dollars,0);
-  const roi=total/INITIAL_CAPITAL*100;
-  const openN=state&&state.shadow_open_positions?Object.keys(state.shadow_open_positions).length:0;
-  const pendN=state&&state.shadow_pending_setups?Object.keys(state.shadow_pending_setups).length:0;
-  const bal=state&&state.shadow_balance!=null?state.shadow_balance:(INITIAL_CAPITAL+total);
-  if(closed.length===0 && openN===0 && pendN===0) return '';
-  return `<div class="sec"><div class="sec-t"><span class="ic">👥</span>مسار الظل <span class="badge badge-v">بدون حد للصفقات المتزامنة</span></div></div>
-  <div class="shadow-note">مسار مواز يفتح كل الإشارات دون قيد على عدد الصفقات المفتوحة في نفس الوقت — لمقارنة الأداء الافتراضي مع الحقيقي.</div>
-  <div class="kpi-grid">
-    ${kpiCard('رأس مال الظل', money(bal), '🟣', '<span></span>', 'sh', 'shbal', bal)}
-    ${kpiCard('ربح الظل', moneyS(total), '🟣', `<span class="kpi-delta ${total>=0?'pos':'neg'}">${pctS(roi)}</span>`, 'sh', 'shtot', total, total>=0?'pos':'neg')}
-    ${kpiCard('نجاح الظل', wr.toFixed(1)+'%', '🟣', `<span class="kpi-delta"><span class="lbl">${wins.length}/${closed.length}</span></span>`, 'sh', 'shwr', wr)}
-    ${kpiCard('صفقات الظل', String(closed.length), '🟣', '<span></span>', 'sh', 'shn', closed.length)}
-    ${kpiCard('مفتوحة (ظل)', String(openN), '🟣', '<span></span>', 'sh', 'shopen', openN)}
-    ${kpiCard('معلّقة (ظل)', String(pendN), '🟣', '<span></span>', 'sh', 'shpend', pendN)}
-  </div>`;
 }
 
 function pendingSection(state){
@@ -863,14 +855,12 @@ function candleSvg(candles,lines,live){
 /* ============ LOAD (نفس منطق بوتك) ============ */
 async function load(){
   try{
-    const [sR,tR,shR]=await Promise.allSettled([
+    const [sR,tR]=await Promise.allSettled([
       fetch(STATE_URL()).then(r=>{if(!r.ok)throw 0;return r.json();}),
-      fetch(TRADES_URL()).then(r=>{if(!r.ok)throw 0;return r.text();}),
-      fetch(SHADOW_TRADES_URL()).then(r=>{if(!r.ok)throw 0;return r.text();})
+      fetch(TRADES_URL()).then(r=>{if(!r.ok)throw 0;return r.text();})
     ]);
     const state=sR.status==='fulfilled'?sR.value:null;
     const trades=tR.status==='fulfilled'?parseCSV(tR.value):[];
-    const shadow=shR.status==='fulfilled'?parseCSV(shR.value):[];
 
     let prices={};
     if(state&&state.open_positions){
@@ -880,7 +870,7 @@ async function load(){
     const ok = state!==null || trades.length>0;
     setStatus(ok);
     if(!ok && firstLoad){ app.innerHTML=`<div class="empty" style="margin-top:20px">لم يتم العثور على بيانات بعد.<br>تأكد من وجود <span class="mono">state.json</span> و <span class="mono">trades_log.csv</span> بجانب الصفحة.</div>`; return; }
-    LAST={state,trades,shadow,prices};
+    LAST={state,trades,prices};
     render();
     // حدّث المودال المفتوح لو كان صفقة (سعر حي)
     refreshOpenModalPrice();
@@ -906,6 +896,11 @@ async function refreshOpenModalPrice(){
 /* ============ BOOT ============ */
 load();
 setInterval(load, REFRESH_MS);
+
+/* PWA — تثبيت كتطبيق على الموبايل */
+if('serviceWorker' in navigator && location.protocol==='https:'){
+  window.addEventListener('load',()=>{ navigator.serviceWorker.register('./sw.js').catch(()=>{}); });
+}
 </script>
 </body>
 </html>
