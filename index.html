@@ -328,11 +328,13 @@ function parseCSV(text){
   const rows=[];
   for(const line of lines){
     const p=line.split(',');
-    if(p.length<8)continue;
+    if(p.length<11)continue;
+    if(p[0]==='pair'||p[0]==='symbol')continue; // تخطي سطر العنوان (header)
     rows.push({
       symbol:p[0], signal_time:p[1], signal_price:p[2], exit_time:p[3], exit_price:p[4],
       pnl_pct:parseFloat(p[5]), pnl_dollars:parseFloat(p[6]),
-      exit_reason:(p[7]||'').trim(), score:p[8], balance:p[9]
+      position_dollars:parseFloat(p[7]),
+      exit_reason:(p[8]||'').trim(), score:p[9], balance:p[10]
     });
   }
   return rows.reverse(); // الأحدث أولًا
