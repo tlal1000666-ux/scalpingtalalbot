@@ -86,6 +86,17 @@
   .sec-t .ic{font-size:16px}
   .count{font-family:var(--mono);font-size:11px;color:var(--dim);background:var(--panel-2);border:1px solid var(--line);padding:2px 9px;border-radius:20px}
 
+  /* ===== Tab bar ===== */
+  .tabbar{display:flex;gap:6px;overflow-x:auto;margin:18px 0 22px;padding-bottom:2px}
+  .tabbtn{display:flex;align-items:center;gap:7px;font-family:var(--sans);font-size:13px;font-weight:600;color:var(--dim);
+    background:var(--panel);border:1px solid var(--line);padding:9px 16px;border-radius:12px;white-space:nowrap;cursor:pointer;transition:.15s}
+  .tabbtn:hover{border-color:#2a3a33;color:var(--text)}
+  .tabbtn.on{background:rgba(61,220,132,.12);color:var(--green);border-color:rgba(61,220,132,.4)}
+  .tabbtn .tic2{font-size:15px}
+  .tab-badge{font-family:var(--mono);font-size:10px;font-weight:700;background:rgba(61,220,132,.2);color:var(--green);
+    padding:1px 7px;border-radius:20px;margin-right:2px}
+  .tabbtn.on .tab-badge{background:rgba(61,220,132,.3)}
+
   /* ===== KPI grid ===== */
   .kpi-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
   @media(min-width:640px){.kpi-grid{grid-template-columns:repeat(3,1fr)}}
@@ -286,7 +297,7 @@ const modal = document.getElementById('modal');
 
 /* ============ STATE (للواجهة فقط، لا يمس بياناتك) ============ */
 let LAST = { state:null, trades:[], prices:{} };
-let UI = { period:'ALL', filter:'all', search:'', openModal:null };
+let UI = { tab:'overview', period:'ALL', filter:'all', search:'', openModal:null };
 let prevVals = {};   // لتأثير الأرقام المتحركة
 let firstLoad = true;
 
@@ -553,18 +564,38 @@ function render(){
   // ===== History =====
   const histSec = historySection(st.closed);
 
-  app.innerHTML = `
-    ${kpiTop}
-    ${kpiSec}
-    <div class="sec"><div class="sec-t"><span class="ic">💓</span>نبض الأداء</div><span class="count">آخر ${Math.min(st.closed.length,44)} صفقة</span></div>
-    ${hb}
-    <div class="sec" style="margin-top:22px"></div>
-    <div class="grid2">${equitySec}${activitySec}</div>
-    <div class="sec"><div class="sec-t"><span class="ic">📂</span>الصفقات المفتوحة</div><span class="count">${openSyms.length}</span></div>
-    ${posSec}
-    ${pendingSec}
-    ${histSec}
-  `;
+  // ===== Tabs =====
+  const TABS = [
+    {id:'overview', label:'نظرة عامة', icon:'📊'},
+    {id:'positions', label:'الصفقات', icon:'📂', badge:openSyms.length},
+    {id:'history', label:'السجل', icon:'📜'},
+    {id:'stats', label:'الإحصائيات', icon:'📈'},
+  ];
+  const tabBar = `<div class="tabbar no-sb">${TABS.map(t=>`
+    <button class="tabbtn ${UI.tab===t.id?'on':''}" data-tab="${t.id}">
+      <span class="tic2">${t.icon}</span>${t.label}${t.badge!=null&&t.badge>0?`<span class="tab-badge">${t.badge}</span>`:''}
+    </button>`).join('')}</div>`;
+
+  let tabContent = '';
+  if(UI.tab==='positions'){
+    tabContent = `
+      <div class="sec"><div class="sec-t"><span class="ic">📂</span>الصفقات المفتوحة</div><span class="count">${openSyms.length}</span></div>
+      ${posSec}
+      ${pendingSec}`;
+  } else if(UI.tab==='history'){
+    tabContent = histSec;
+  } else if(UI.tab==='stats'){
+    tabContent = kpiSec;
+  } else { // overview (افتراضي)
+    tabContent = `
+      ${kpiTop}
+      <div class="sec"><div class="sec-t"><span class="ic">💓</span>نبض الأداء</div><span class="count">آخر ${Math.min(st.closed.length,44)} صفقة</span></div>
+      ${hb}
+      <div class="sec" style="margin-top:22px"></div>
+      <div class="grid2">${equitySec}${activitySec}</div>`;
+  }
+
+  app.innerHTML = `${tabBar}${tabContent}`;
 
   bindEvents();
   firstLoad=false;
@@ -723,6 +754,7 @@ function historySection(closed){
 
 /* ============ EVENTS ============ */
 function bindEvents(){
+  document.querySelectorAll('.tabbtn').forEach(b=>b.onclick=()=>{UI.tab=b.dataset.tab; render();});
   document.querySelectorAll('#period-seg button').forEach(b=>b.onclick=()=>{UI.period=b.dataset.p;render();});
   document.querySelectorAll('#hist-filters .fbtn').forEach(b=>b.onclick=()=>{UI.filter=b.dataset.f;render();});
   const s=document.getElementById('hist-search');
