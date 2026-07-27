@@ -768,7 +768,7 @@ def _run_cycle(state, symbols):
                     f"🌟 بسم الله توكلت على الله 🌟\n\n"
                     f"💎 Pair: #{sym}\n"
                     f"💎 Exchange: BINANCE\n"
-                    f"⏳ Timeframe: 5m\n"
+                    f"⏳ Timeframe: 30m\n"
                     f"📅 Time: {time_str} (GMT+3)\n\n"
                     f"💰 Entry ➤ {fmt_price(sig['entry1'])}\n\n"
                     f"🎯 Target\n"
