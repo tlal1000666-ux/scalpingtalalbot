@@ -323,15 +323,28 @@ def handle_help(chat_id):
 
 
 def _check_exit_with_trail(pos, candle, bars_since_signal):
-    """يفحص شمعة واحدة لصفقة مفتوحة: SL/TP الكاملين، قفل الربح التتبعي (Trailing Lock)،
-    والوقف الزمني. يرجع (exit_price, exit_reason, armed_updated) - armed_updated لازم
-    يُحفظ برجوعه بـpos['armed'] حتى لو ما صار إغلاق، عشان الحالة تستمر للدورة الجاية.
-    نفس المنطق بالضبط المستخدم بمحرك الباكتست (resolve_setup) لضمان عدم وجود فروقات."""
+    """يفحص شمعة واحدة لصفقة مفتوحة. أولوية أولى: النزول لفريم الدقيقة (1m) عبر
+    _resolve_position_1m لمعرفة الترتيب الحقيقي لكل الأحداث بدقة. لو فشل الجلب
+    (شبكة/API)، يرجع لمنطق فريم 30 دقيقة التقريبي (الأسوأ أولاً) كـfallback آمن.
+    يرجع (exit_price, exit_reason, armed_updated) - armed_updated لازم يُحفظ برجوعه
+    بـpos['armed'] حتى لو ما صار إغلاق، عشان الحالة تستمر للدورة الجاية."""
     sl, tp = pos["sl"], pos["tp"]
     armed = pos.get("armed", False)
     trail_arm_price = pos["entry_price"] + (tp - pos["entry_price"]) * strategy.TRAIL_ARM_PCT
     trail_exit_price = pos["entry_price"] + (tp - pos["entry_price"]) * strategy.TRAIL_EXIT_PCT
 
+    exit_price, exit_reason, armed_1m, unresolved = _resolve_position_1m(
+        pos.get("_sym", ""), candle["open_time_utc"], sl, tp, armed, trail_arm_price, trail_exit_price
+    )
+    if not unresolved:
+        armed = armed_1m
+        if exit_price is not None:
+            return exit_price, exit_reason, armed
+        if bars_since_signal > strategy.MAX_BARS_ACTIVE:
+            return candle["close"], "Timeout ⏱️", armed
+        return None, None, armed
+
+    # --- Fallback: فشل جلب بيانات الدقيقة (شبكة/API) - نعتمد منطق الشمعة الكبيرة (30m) ---
     if candle["high"] >= trail_arm_price:
         armed = True
 
@@ -355,6 +368,43 @@ def _check_exit_with_trail(pos, candle, bars_since_signal):
         return candle["close"], "Timeout ⏱️", armed
 
     return None, None, armed
+
+
+def _resolve_position_1m(symbol, candle_open_time, sl, tp, trail_armed_in, trail_arm_price, trail_exit_price):
+    """يفحص شمعة الـ30 دقيقة بدقة فريم الدقيقة (1m) لتحديد الترتيب الحقيقي لكل الأحداث
+    (SL، TP، تسليح القفل التتبعي، خروج القفل التتبعي) - بدل الاعتماد على أعلى/أوطى سعر
+    الشمعة الكبيرة مباشرة، اللي بيفترض ترتيب تشاؤمي (الأسوأ أولاً) قد ما يكون غير صحيح فعليًا.
+    يُستدعى لكل شمعة، لكل صفقة مفتوحة (مو بس وقت تعارض SL/TP).
+
+    يرجع (exit_price, exit_reason, trail_armed_updated, unresolved):
+    - unresolved=True يعني فشل الجلب أو البيانات ناقصة - المستدعي لازم يعتمد fallback (منطق 30m).
+    - unresolved=False يعني فحصنا الشمعة بدقة الدقيقة كاملة؛ exit_price/exit_reason=None لو ما صار خروج."""
+    window_start = pd.Timestamp(candle_open_time)
+    window_end = window_start + pd.Timedelta(minutes=INTERVAL_MINUTES)
+
+    try:
+        df_1m = fetch_klines(symbol, interval="1m", limit=90)
+    except Exception:
+        return None, None, trail_armed_in, True
+    if df_1m is None or df_1m.empty:
+        return None, None, trail_armed_in, True
+
+    mask = (df_1m["open_time_utc"] >= window_start) & (df_1m["open_time_utc"] < window_end)
+    window_candles = df_1m[mask].sort_values("open_time_utc")
+    if window_candles.empty:
+        return None, None, trail_armed_in, True
+
+    trail_armed = trail_armed_in
+    for _, c in window_candles.iterrows():
+        if c["low"] <= sl:
+            return sl, "SL 🔴", trail_armed, False
+        if c["high"] >= tp:
+            return tp, "TP 🟢", trail_armed, False
+        if c["high"] >= trail_arm_price:
+            trail_armed = True
+        if trail_armed and c["low"] <= trail_exit_price:
+            return trail_exit_price, "Trail-Lock 🔒", trail_armed, False
+    return None, None, trail_armed, False
 
 
 def _resolve_conflict_order(symbol, candle_open_time, sl, tp):
@@ -768,7 +818,7 @@ def _run_cycle(state, symbols):
                     f"🌟 بسم الله توكلت على الله 🌟\n\n"
                     f"💎 Pair: #{sym}\n"
                     f"💎 Exchange: BINANCE\n"
-                    f"⏳ Timeframe: 30m\n"
+                    f"⏳ Timeframe: 5m\n"
                     f"📅 Time: {time_str} (GMT+3)\n\n"
                     f"💰 Entry ➤ {fmt_price(sig['entry1'])}\n\n"
                     f"🎯 Target\n"
