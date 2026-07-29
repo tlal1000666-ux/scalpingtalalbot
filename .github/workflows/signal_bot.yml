@@ -4,6 +4,21 @@ on:
   schedule:
     - cron: "*/15 * * * *"
   workflow_dispatch:
+    inputs:
+      action:
+        description: "نوع التشغيل"
+        required: true
+        default: "run"
+        type: choice
+        options:
+          - run
+          - reset
+          - status
+      symbol:
+        description: "رمز محدد (اختياري - اتركه فاضي لكل الرموز)"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: write
@@ -28,30 +43,57 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Reset state (if requested)
+        if: ${{ github.event.inputs.action == 'reset' }}
         run: |
-          pip install -r requirements.txt
+          echo '{"open_positions":{},"pending_setups":{},"last_candle_seen":{},"balance":10000.0,"stats":{"total_trades":0,"wins":0,"losses":0,"gross_profit":0.0,"gross_loss":0.0},"last_update_id":0,"signal_history":[],"cooldown_until":{}}' > state.json
+          echo "" > trades_log.csv
+          echo "✅ State has been reset to defaults"
 
       - name: Run bot
+        if: ${{ github.event.inputs.action != 'status' }}
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          BOT_ACTION: ${{ github.event.inputs.action || 'run' }}
+          BOT_SYMBOL: ${{ github.event.inputs.symbol || '' }}
+        run: python run_bot.py
+
+      - name: Show status (if requested)
+        if: ${{ github.event.inputs.action == 'status' }}
         run: |
-          python run_bot.py
+          echo "=== Bot Status ==="
+          echo ""
+          if [ -f state.json ]; then
+            python3 -c "
+          import json
+          with open('state.json') as f:
+              s = json.load(f)
+          print(f'Balance: \${s.get(\"balance\", 10000):,.2f}')
+          st = s.get('stats', {})
+          total = st.get('total_trades', 0)
+          wins = st.get('wins', 0)
+          print(f'Trades: {total} | Wins: {wins} | WR: {wins/total*100:.1f}%' if total else 'No trades yet')
+          print(f'Open: {len(s.get(\"open_positions\", {}))} | Pending: {len(s.get(\"pending_setups\", {}))}')
+          "
+          else
+            echo "No state.json found"
+          fi
 
       - name: Commit state & trade log back to repo
+        if: ${{ github.event.inputs.action != 'status' }}
         run: |
           git config --global user.name "signal-bot"
           git config --global user.email "signal-bot@users.noreply.github.com"
-
           git add -A
-
           if ! git diff --staged --quiet; then
             git commit -m "Update bot state [skip ci]"
           else
             echo "No changes to commit"
             exit 0
           fi
-
           git fetch origin main
           git rebase origin/main
           git push origin HEAD:main
