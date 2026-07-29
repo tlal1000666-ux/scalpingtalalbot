@@ -180,7 +180,16 @@ const pct=v=>(v>=0?'+':'')+v.toFixed(2)+'%';
 const price=p=>{p=Number(p);if(!p)return'--';if(p>=1000)return p.toFixed(2);if(p>=1)return p.toFixed(4);if(p>=0.001)return p.toFixed(6);return p.toFixed(8)};
 function timeAgo(t){if(!t)return'';const m=Math.floor((Date.now()-new Date(t).getTime())/60000);if(m<1)return'الآن';if(m<60)return m+'د';const h=Math.floor(m/60);if(h<24)return h+'س';return Math.floor(h/24)+'ي'}
 function fmtDT(t){if(!t)return'';try{return new Date(t).toLocaleString('ar-EG',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}catch(e){return String(t).slice(0,16)}}
-function parseCSV(txt){const lines=txt.trim().split('\n');if(lines.length<2)return[];const h=lines[0].split(',');return lines.slice(1).filter(l=>l.trim()).map(l=>{const v=l.split(',');const r={};h.forEach((k,i)=>r[k.trim()]=(v[i]||'').trim());return r;});}
+function parseCSV(txt){
+  const lines=txt.trim().split('\n').filter(l=>l.trim());
+  if(!lines.length)return[];
+  const COLS=['pair','signal_time','entry_price','exit_time','exit_price','pnl_pct_net','pnl_dollars','position_dollars','exit_reason','score','balance_after'];
+  const first=lines[0].split(',')[0].trim().toLowerCase();
+  const hasHeader=(first==='pair'||first==='symbol');
+  const data=hasHeader?lines.slice(1):lines;
+  const h=hasHeader?lines[0].split(',').map(x=>x.trim()):COLS;
+  return data.map(l=>{const v=l.split(',');const r={};h.forEach((k,i)=>r[k]=(v[i]||'').trim());return r;});
+}
 async function getPrices(syms){const p={};for(const s of syms){try{const r=await fetch(`https://data-api.binance.vision/api/v3/ticker/price?symbol=${encodeURIComponent(s)}`);if(r.ok){const d=await r.json();p[s]=parseFloat(d.price);}}catch(e){}}return p;}
 
 function render(){
