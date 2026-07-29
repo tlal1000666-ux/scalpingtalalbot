@@ -260,7 +260,7 @@ function drawEquity(trades){
   EQ_TRADES=trades;
   const filtered=filterByRange(trades,EQ_RANGE);
   if(!filtered.length){$('#eq-svg').innerHTML='';EQ_PTS=[];return;}
-  const startBal=filtered.length>0?num(filtered[0].balance_after)-num(filtered[0].pnl_dollars):10000;
+  const startBal=10000;
   const pts=[startBal,...filtered.map(t=>num(t.balance_after)||startBal)];
   EQ_PTS=pts;
   const W=800,H=220,P=10;
