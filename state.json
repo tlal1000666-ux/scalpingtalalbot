@@ -232,11 +232,11 @@
   },
   "balance": 10659.53,
   "stats": {
-    "total_trades": 195,
-    "wins": 119,
-    "losses": 76,
-    "gross_profit": 4298.39039202025,
-    "gross_loss": 3638.866308334961
+    "total_trades": 86,
+    "wins": 59,
+    "losses": 27,
+    "gross_profit": 1967.58,
+    "gross_loss": 1275.24
   },
   "last_update_id": 872439027,
   "signal_history": [
