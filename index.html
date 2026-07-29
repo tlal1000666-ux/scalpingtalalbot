@@ -3,542 +3,330 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Scalping Talal Bot — Trading Terminal</title>
-<meta name="theme-color" content="#18191a">
+<title>Scalping Talal Bot</title>
+<meta name="theme-color" content="#0d1117">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=IBM+Plex+Sans+Arabic:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
 :root{
-  --bg:#0a0a0f;--bg2:#111118;--bg3:#16161f;
-  --card:#1a1a24;--card2:#1f1f2b;--card3:#252533;
-  --border:#2a2a3a;--border2:#333346;
-  --text:#f0f0f5;--text2:#a0a0b8;--text3:#6a6a82;
-  --green:#00d68f;--green-bg:rgba(0,214,143,.08);--green-border:rgba(0,214,143,.25);
-  --red:#ff4d6a;--red-bg:rgba(255,77,106,.08);--red-border:rgba(255,77,106,.25);
-  --blue:#4d8dff;--blue-bg:rgba(77,141,255,.08);
-  --purple:#a78bfa;--amber:#fbbf24;
-  --mono:'JetBrains Mono',monospace;
-  --sans:'IBM Plex Sans Arabic','Inter',sans-serif;
-  --radius:16px;--radius-sm:10px;
-  --shadow:0 4px 24px rgba(0,0,0,.4),0 1px 3px rgba(0,0,0,.3);
-  --shadow-lg:0 8px 40px rgba(0,0,0,.5);
+--bg:#0d1117;--surface:#161b22;--surface2:#1c2128;--surface3:#21262d;
+--border:#30363d;--border2:#3d444d;
+--text:#e6edf3;--text2:#8b949e;--text3:#484f58;
+--green:#3fb950;--green-bg:rgba(63,185,80,.1);--green-b:rgba(63,185,80,.3);
+--red:#f85149;--red-bg:rgba(248,81,73,.1);--red-b:rgba(248,81,73,.3);
+--blue:#58a6ff;--blue-bg:rgba(88,166,255,.1);
+--purple:#bc8cff;--amber:#d29922;--amber-bg:rgba(210,153,34,.1);
+--mono:'JetBrains Mono',monospace;
+--sans:'IBM Plex Sans Arabic',sans-serif;
+--r:12px;
 }
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh;-webkit-font-smoothing:antialiased}
-a{color:var(--blue);text-decoration:none}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh;line-height:1.5}
 ::-webkit-scrollbar{width:6px;height:6px}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
 ::-webkit-scrollbar-track{background:transparent}
-
 .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
 .pos{color:var(--green)}.neg{color:var(--red)}
-
-/* === Cover + Profile (Facebook style) === */
-.cover{position:relative;height:220px;background:linear-gradient(135deg,#0f2027,#203a43,#2c5364);overflow:hidden;border-radius:0 0 20px 20px}
-.cover::after{content:'';position:absolute;inset:0;background:url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.03'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")}
-.cover-glow{position:absolute;top:-50%;right:-20%;width:60%;height:200%;background:radial-gradient(ellipse,rgba(0,214,143,.12),transparent 70%);pointer-events:none}
-.cover-grid{position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,.02) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.02) 1px,transparent 1px);background-size:40px 40px}
-
-.profile-section{position:relative;max-width:1100px;margin:-60px auto 0;padding:0 20px;z-index:10}
-.profile-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:24px 28px;box-shadow:var(--shadow-lg);display:flex;align-items:flex-end;gap:20px;flex-wrap:wrap}
-.avatar{width:88px;height:88px;border-radius:50%;background:linear-gradient(135deg,var(--green),#00b876);display:flex;align-items:center;justify-content:center;font-size:36px;border:4px solid var(--card);box-shadow:0 4px 20px rgba(0,214,143,.3);flex-shrink:0}
-.profile-info{flex:1;min-width:200px}
-.profile-name{font-size:24px;font-weight:800;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.verified{width:22px;height:22px;background:var(--blue);border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:12px;color:#fff}
-.profile-sub{color:var(--text2);font-size:13px;margin-top:4px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-.profile-stats{display:flex;gap:24px;margin-top:12px}
-.p-stat{text-align:center}
-.p-stat b{font-family:var(--mono);font-size:18px;font-weight:700;display:block}
-.p-stat span{font-size:11px;color:var(--text3)}
-.profile-actions{display:flex;gap:10px}
-.btn{padding:10px 20px;border-radius:var(--radius-sm);font-size:13px;font-weight:600;border:none;cursor:pointer;transition:.2s;font-family:var(--sans)}
-.btn-primary{background:var(--green);color:#000}
-.btn-primary:hover{background:#00e89d;transform:translateY(-1px)}
-.btn-outline{background:transparent;color:var(--text);border:1px solid var(--border2)}
-.btn-outline:hover{background:var(--card2)}
-
-/* === Layout === */
-.container{max-width:1100px;margin:0 auto;padding:24px 20px 60px}
-.grid-main{display:grid;grid-template-columns:1fr;gap:20px}
-@media(min-width:900px){.grid-main{grid-template-columns:340px 1fr}}
-
-/* === Cards === */
-.card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow)}
-.card-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border)}
-.card-title{font-size:14px;font-weight:700;display:flex;align-items:center;gap:8px}
-.card-body{padding:16px 20px}
-
-/* === KPI Cards === */
-.kpi-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
-@media(min-width:600px){.kpi-grid{grid-template-columns:repeat(3,1fr)}}
-@media(min-width:1000px){.kpi-grid{grid-template-columns:repeat(6,1fr)}}
-.kpi{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-sm);padding:16px;transition:.2s;position:relative;overflow:hidden}
-.kpi:hover{border-color:var(--border2);transform:translateY(-2px);box-shadow:var(--shadow)}
-.kpi::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;border-radius:3px 3px 0 0}
-.kpi.k-green::before{background:var(--green)}
-.kpi.k-red::before{background:var(--red)}
-.kpi.k-blue::before{background:var(--blue)}
-.kpi.k-purple::before{background:var(--purple)}
-.kpi.k-amber::before{background:var(--amber)}
-.kpi-label{font-size:11px;color:var(--text3);margin-bottom:8px;display:flex;align-items:center;gap:5px}
-.kpi-val{font-family:var(--mono);font-size:20px;font-weight:700;line-height:1}
-.kpi-foot{font-size:10px;color:var(--text3);margin-top:6px;font-family:var(--mono)}
-
-/* === Tabs === */
-.tabs{display:flex;gap:4px;background:var(--bg2);border-radius:var(--radius-sm);padding:4px;margin-bottom:20px;overflow-x:auto}
-.tab{padding:10px 18px;border-radius:8px;font-size:13px;font-weight:600;color:var(--text3);cursor:pointer;transition:.2s;white-space:nowrap;border:none;background:none;font-family:var(--sans)}
-.tab:hover{color:var(--text);background:var(--card)}
-.tab.on{background:var(--green);color:#000}
-.tab .badge{font-family:var(--mono);font-size:10px;background:rgba(255,255,255,.2);padding:1px 6px;border-radius:10px;margin-inline-start:5px}
-
-/* === Position Cards === */
+.wrap{max-width:1200px;margin:0 auto;padding:16px}
+@media(min-width:768px){.wrap{padding:24px}}
+.header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 0;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:12px}
+.logo{width:44px;height:44px;border-radius:12px;background:linear-gradient(135deg,#238636,#2ea043);display:flex;align-items:center;justify-content:center;font-size:22px;box-shadow:0 0 20px rgba(46,160,67,.3)}
+.brand h1{font-size:18px;font-weight:800}
+.brand p{font-size:11px;color:var(--text2);font-family:var(--mono)}
+.live-badge{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--green);background:var(--green-bg);border:1px solid var(--green-b);padding:5px 12px;border-radius:20px}
+.live-dot{width:7px;height:7px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1;box-shadow:0 0 4px var(--green)}50%{opacity:.4;box-shadow:none}}
+.kpis{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin:20px 0}
+@media(min-width:640px){.kpis{grid-template-columns:repeat(3,1fr)}}
+@media(min-width:1000px){.kpis{grid-template-columns:repeat(6,1fr)}}
+.kpi{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px;position:relative;overflow:hidden}
+.kpi::after{content:'';position:absolute;top:0;left:0;right:0;height:2px}
+.kpi.g::after{background:var(--green)}.kpi.r::after{background:var(--red)}.kpi.b::after{background:var(--blue)}.kpi.a::after{background:var(--amber)}.kpi.p::after{background:var(--purple)}
+.kpi-label{font-size:10px;color:var(--text2);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px}
+.kpi-val{font-family:var(--mono);font-size:20px;font-weight:700}
+.kpi-sub{font-size:10px;color:var(--text3);margin-top:4px;font-family:var(--mono)}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);margin-bottom:16px;overflow:hidden}
+.card-h{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--border)}
+.card-t{font-size:13px;font-weight:700;display:flex;align-items:center;gap:8px}
+.card-b{padding:16px 18px}
+.tabs{display:flex;gap:4px;margin:20px 0 16px;overflow-x:auto;padding-bottom:4px}
+.tab{padding:8px 16px;border-radius:8px;font-size:12px;font-weight:600;color:var(--text2);cursor:pointer;border:1px solid transparent;background:var(--surface);transition:.15s;white-space:nowrap;font-family:var(--sans)}
+.tab:hover{color:var(--text);border-color:var(--border)}
+.tab.on{background:var(--green-bg);color:var(--green);border-color:var(--green-b)}
+.tab .cnt{font-family:var(--mono);font-size:10px;background:var(--surface3);padding:1px 6px;border-radius:8px;margin-inline-start:4px}
+.eq-wrap{position:relative;height:220px;margin:8px 0}
+.eq-svg{width:100%;height:100%;display:block}
+.eq-val{font-family:var(--mono);font-size:28px;font-weight:700;margin-bottom:2px}
+.eq-ret{font-family:var(--mono);font-size:13px;font-weight:600}
+.hb{display:flex;gap:3px;align-items:flex-end;height:44px;overflow-x:auto;padding:4px 0}
+.hb-bar{flex:0 0 auto;width:7px;border-radius:2px;min-height:6px;transition:.15s;cursor:pointer}
+.hb-bar:hover{transform:scaleY(1.3);filter:brightness(1.3)}
+.hb-bar.tp{background:var(--green)}.hb-bar.trail{background:#2ea043}.hb-bar.sl{background:var(--red)}.hb-bar.to{background:var(--amber)}
+.hb-bar.open{background:transparent;border:1.5px dashed var(--text3);height:20px!important;animation:pulse 1.5s infinite}
 .pos-grid{display:grid;grid-template-columns:1fr;gap:12px}
 @media(min-width:700px){.pos-grid{grid-template-columns:repeat(2,1fr)}}
-.pos-card{background:var(--card2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:16px;transition:.2s;cursor:pointer}
-.pos-card:hover{border-color:var(--green-border);box-shadow:0 0 20px rgba(0,214,143,.08)}
+@media(min-width:1100px){.pos-grid{grid-template-columns:repeat(3,1fr)}}
+.pos-card{background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:16px;transition:.2s}
+.pos-card:hover{border-color:var(--border2);transform:translateY(-1px)}
 .pos-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
-.pos-sym{font-family:var(--mono);font-size:15px;font-weight:700;display:flex;align-items:center;gap:8px}
-.pos-badge{font-size:10px;font-weight:700;padding:3px 8px;border-radius:6px}
-.pos-badge.buy{background:var(--green-bg);color:var(--green);border:1px solid var(--green-border)}
-.pos-pnl{font-family:var(--mono);font-size:18px;font-weight:700}
-.pos-details{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
-.pos-d{text-align:center}
-.pos-d .l{font-size:10px;color:var(--text3)}
-.pos-d .v{font-family:var(--mono);font-size:12px;font-weight:600;margin-top:2px}
-
-/* === Trade History === */
-.trade-row{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--border)}
-.trade-row:last-child{border-bottom:none}
-.trade-icon{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
-.trade-icon.win{background:var(--green-bg);border:1px solid var(--green-border)}
-.trade-icon.loss{background:var(--red-bg);border:1px solid var(--red-border)}
-.trade-info{flex:1;min-width:0}
-.trade-sym{font-family:var(--mono);font-size:13px;font-weight:600}
-.trade-time{font-size:11px;color:var(--text3)}
-.trade-pnl{font-family:var(--mono);font-size:14px;font-weight:700;text-align:left}
-
-/* === Activity Feed === */
-.feed-item{display:flex;gap:12px;padding:14px 0;border-bottom:1px solid var(--border)}
+.pos-sym{font-family:var(--mono);font-size:14px;font-weight:700}
+.pos-tag{font-size:9px;font-weight:700;padding:2px 7px;border-radius:5px;background:var(--blue-bg);color:var(--blue);border:1px solid rgba(88,166,255,.3)}
+.range-bar{position:relative;height:32px;background:var(--surface3);border-radius:6px;margin:12px 0;overflow:visible}
+.range-fill{position:absolute;top:0;bottom:0;border-radius:6px}
+.range-fill.profit{background:var(--green-bg);border:1px solid var(--green-b)}
+.range-fill.loss{background:var(--red-bg);border:1px solid var(--red-b)}
+.range-marker{position:absolute;top:-4px;bottom:-4px;width:2px;border-radius:1px}
+.range-marker.entry{background:var(--blue)}
+.range-marker.current{background:#fff;box-shadow:0 0 6px rgba(255,255,255,.5)}
+.range-marker.sl{background:var(--red)}
+.range-marker.tp{background:var(--green)}
+.range-label{position:absolute;top:-16px;font-size:8px;font-family:var(--mono);transform:translateX(-50%);white-space:nowrap}
+.pos-info{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:10px}
+.pos-i{text-align:center}
+.pos-i .l{font-size:9px;color:var(--text3)}
+.pos-i .v{font-family:var(--mono);font-size:11px;font-weight:600;margin-top:1px}
+.tr-row{display:grid;grid-template-columns:36px 1fr auto;gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)}
+.tr-row:last-child{border-bottom:none}
+.tr-ic{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:14px}
+.tr-ic.w{background:var(--green-bg);border:1px solid var(--green-b)}
+.tr-ic.l{background:var(--red-bg);border:1px solid var(--red-b)}
+.tr-sym{font-family:var(--mono);font-size:12px;font-weight:600}
+.tr-meta{font-size:10px;color:var(--text3);font-family:var(--mono)}
+.tr-pnl{text-align:left}
+.tr-pnl .v{font-family:var(--mono);font-size:13px;font-weight:700}
+.tr-pnl .p{font-family:var(--mono);font-size:10px}
+.feed-item{display:flex;gap:10px;padding:12px 0;border-bottom:1px solid var(--border);align-items:flex-start}
 .feed-item:last-child{border-bottom:none}
-.feed-dot{width:10px;height:10px;border-radius:50%;margin-top:5px;flex-shrink:0}
-.feed-dot.g{background:var(--green);box-shadow:0 0 8px rgba(0,214,143,.5)}
-.feed-dot.r{background:var(--red);box-shadow:0 0 8px rgba(255,77,106,.5)}
-.feed-dot.b{background:var(--blue);box-shadow:0 0 8px rgba(77,141,255,.5)}
-.feed-content{flex:1}
-.feed-text{font-size:13px;line-height:1.5}
-.feed-meta{font-size:11px;color:var(--text3);margin-top:3px;font-family:var(--mono)}
-
-/* === Equity Chart === */
-.eq-chart{width:100%;height:200px;position:relative}
-.eq-svg{width:100%;height:100%}
-
-/* === Heartbeat === */
-.hb-wrap{display:flex;gap:3px;overflow-x:auto;padding:12px 0}
-.hb-bar{flex:0 0 auto;width:8px;height:28px;border-radius:3px;transition:.15s}
-.hb-bar:hover{transform:scaleY(1.2)}
-.hb-bar.tp{background:var(--green)}
-.hb-bar.sl{background:var(--red)}
-.hb-bar.to{background:var(--amber)}
-.hb-bar.open{background:transparent;border:1.5px dashed var(--text3);animation:pulse 1.5s infinite}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
-
-/* === Status bar === */
-.status-bar{position:fixed;bottom:0;left:0;right:0;background:rgba(10,10,15,.9);backdrop-filter:blur(12px);border-top:1px solid var(--border);padding:10px 20px;z-index:100;display:flex;align-items:center;justify-content:space-between;font-size:11px;color:var(--text3)}
-.status-dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-inline-end:6px}
-.status-dot.on{background:var(--green);box-shadow:0 0 6px var(--green)}
-.status-dot.off{background:var(--red)}
-
-/* === Empty state === */
-.empty{text-align:center;padding:40px 20px;color:var(--text3)}
-.empty .ic{font-size:40px;margin-bottom:12px}
-
-/* === Loading === */
-.loading{display:flex;align-items:center;justify-content:center;padding:60px 0;gap:12px;color:var(--text3)}
-.spin{width:20px;height:20px;border:2px solid var(--border);border-top-color:var(--green);border-radius:50%;animation:sp .7s linear infinite}
-@keyframes sp{to{transform:rotate(360deg)}}
-
-/* === Responsive === */
-@media(max-width:640px){
-  .cover{height:160px}
-  .profile-section{margin-top:-45px}
-  .profile-card{padding:18px;gap:14px}
-  .avatar{width:64px;height:64px;font-size:26px}
-  .profile-name{font-size:19px}
-  .profile-stats{gap:16px}
-  .kpi-grid{grid-template-columns:repeat(2,1fr)}
-}
+.feed-dot{width:8px;height:8px;border-radius:50%;margin-top:6px;flex-shrink:0}
+.feed-dot.g{background:var(--green);box-shadow:0 0 6px var(--green)}
+.feed-dot.r{background:var(--red);box-shadow:0 0 6px var(--red)}
+.feed-dot.b{background:var(--blue);box-shadow:0 0 6px var(--blue)}
+.feed-dot.a{background:var(--amber)}
+.feed-text{font-size:12px;line-height:1.6}
+.feed-time{font-size:10px;color:var(--text3);font-family:var(--mono)}
+.status{position:fixed;bottom:0;left:0;right:0;background:rgba(13,17,23,.92);backdrop-filter:blur(10px);border-top:1px solid var(--border);padding:8px 20px;display:flex;align-items:center;justify-content:space-between;font-size:10px;color:var(--text3);z-index:99}
+.st-dot{width:6px;height:6px;border-radius:50%;display:inline-block;margin-inline-end:5px}
+.st-dot.on{background:var(--green);box-shadow:0 0 4px var(--green)}
+.st-dot.off{background:var(--red)}
+.empty{text-align:center;padding:40px 20px;color:var(--text3);font-size:13px}
+.hidden{display:none}
+.pend-row{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);gap:10px}
+.pend-row:last-child{border-bottom:none}
+.pend-sym{font-family:var(--mono);font-size:12px;font-weight:600}
+.pend-info{font-size:10px;color:var(--text2);font-family:var(--mono)}
 </style>
 </head>
 <body>
-
-<!-- Cover -->
-<div class="cover">
-  <div class="cover-glow"></div>
-  <div class="cover-grid"></div>
-</div>
-
-<!-- Profile -->
-<div class="profile-section">
-  <div class="profile-card">
-    <div class="avatar">📈</div>
-    <div class="profile-info">
-      <div class="profile-name">
-        Scalping Talal Bot
-        <span class="verified">✓</span>
-      </div>
-      <div class="profile-sub">
-        <span>BINANCE · SPOT</span>
-        <span>·</span>
-        <span>إطار 30 دقيقة</span>
-        <span>·</span>
-        <span id="upd-txt">آخر تحديث: --</span>
-      </div>
-      <div class="profile-stats">
-        <div class="p-stat"><b id="ps-trades">--</b><span>صفقة</span></div>
-        <div class="p-stat"><b id="ps-wr" class="pos">--</b><span>نسبة النجاح</span></div>
-        <div class="p-stat"><b id="ps-pf">--</b><span>عامل الربح</span></div>
-        <div class="p-stat"><b id="ps-ret" class="pos">--</b><span>العائد</span></div>
-      </div>
+<div class="wrap">
+  <div class="header">
+    <div class="brand">
+      <div class="logo">📈</div>
+      <div><h1>Scalping Talal Bot</h1><p>BINANCE · SPOT · 30m · BOS+OB</p></div>
     </div>
-    <div class="profile-actions">
-      <button class="btn btn-primary" onclick="window.open('https://t.me/Dr_talaltrke','_blank')">📱 تلجرام</button>
-      <button class="btn btn-outline" onclick="load()">🔄 تحديث</button>
+    <div style="display:flex;align-items:center;gap:10px">
+      <div class="live-badge"><span class="live-dot"></span> LIVE</div>
+      <span class="mono" style="font-size:10px;color:var(--text3)" id="upd">--</span>
     </div>
   </div>
-</div>
-
-<!-- Main Content -->
-<div class="container">
-  <!-- KPIs -->
-  <div class="kpi-grid" id="kpi-grid" style="margin-bottom:24px"></div>
-
-  <!-- Tabs -->
-  <div class="tabs" id="tabs">
-    <button class="tab on" data-tab="overview">📊 نظرة عامة</button>
-    <button class="tab" data-tab="positions">📂 الصفقات <span class="badge" id="pos-count">0</span></button>
-    <button class="tab" data-tab="history">📜 السجل</button>
-    <button class="tab" data-tab="feed">⚡ النشاط</button>
+  <div class="kpis" id="kpis"></div>
+  <div class="tabs">
+    <div class="tab on" data-t="overview">📊 نظرة عامة</div>
+    <div class="tab" data-t="positions">📂 الصفقات <span class="cnt" id="cnt-pos">0</span></div>
+    <div class="tab" data-t="pending">⏳ معلّقة <span class="cnt" id="cnt-pend">0</span></div>
+    <div class="tab" data-t="history">📜 السجل <span class="cnt" id="cnt-hist">0</span></div>
+    <div class="tab" data-t="feed">⚡ النشاط</div>
   </div>
-
-  <!-- Tab: Overview -->
-  <div id="tab-overview">
-    <div class="grid-main">
-      <!-- Right sidebar -->
-      <div>
-        <!-- Equity -->
-        <div class="card" style="margin-bottom:16px">
-          <div class="card-header">
-            <div class="card-title">📈 منحنى رأس المال</div>
-            <span class="mono pos" id="eq-pct" style="font-size:12px;font-weight:600">--</span>
-          </div>
-          <div class="card-body">
-            <div style="font-family:var(--mono);font-size:26px;font-weight:700;margin-bottom:4px" id="eq-val">$10,000</div>
-            <div class="eq-chart"><svg class="eq-svg" id="eq-svg"></svg></div>
-          </div>
-        </div>
-        <!-- Heartbeat -->
-        <div class="card">
-          <div class="card-header"><div class="card-title">💓 نبض الأداء</div><span style="font-size:11px;color:var(--text3)" id="hb-count"></span></div>
-          <div class="card-body"><div class="hb-wrap" id="hb"></div></div>
-        </div>
-      </div>
-      <!-- Left main -->
-      <div>
-        <!-- Open positions -->
-        <div class="card" style="margin-bottom:16px">
-          <div class="card-header"><div class="card-title">📂 صفقات مفتوحة</div><span class="mono" style="font-size:12px;color:var(--text3)" id="open-count"></span></div>
-          <div class="card-body"><div class="pos-grid" id="pos-grid"></div></div>
-        </div>
-        <!-- Recent trades -->
-        <div class="card">
-          <div class="card-header"><div class="card-title">🕑 آخر الصفقات</div></div>
-          <div class="card-body" id="recent-trades"></div>
-        </div>
+  <div id="t-overview">
+    <div class="card">
+      <div class="card-h"><div class="card-t">📈 منحنى رأس المال</div><span class="eq-ret mono" id="eq-ret"></span></div>
+      <div class="card-b">
+        <div class="eq-val" id="eq-val">$10,000</div>
+        <div class="eq-wrap"><svg class="eq-svg" id="eq-svg" viewBox="0 0 800 220" preserveAspectRatio="none"></svg></div>
       </div>
     </div>
+    <div class="card">
+      <div class="card-h"><div class="card-t">💓 نبض الأداء</div><span class="mono" style="font-size:10px;color:var(--text3)" id="hb-info"></span></div>
+      <div class="card-b"><div class="hb" id="hb"></div></div>
+    </div>
+    <div class="card">
+      <div class="card-h"><div class="card-t">📂 صفقات مفتوحة</div></div>
+      <div class="card-b"><div class="pos-grid" id="pos-overview"></div></div>
+    </div>
+    <div class="card">
+      <div class="card-h"><div class="card-t">🕑 آخر الصفقات</div></div>
+      <div class="card-b" id="recent"></div>
+    </div>
   </div>
-
-  <!-- Tab: Positions -->
-  <div id="tab-positions" style="display:none">
-    <div class="card"><div class="card-body"><div class="pos-grid" id="pos-grid-full"></div></div></div>
-  </div>
-
-  <!-- Tab: History -->
-  <div id="tab-history" style="display:none">
-    <div class="card"><div class="card-body" id="history-list"></div></div>
-  </div>
-
-  <!-- Tab: Feed -->
-  <div id="tab-feed" style="display:none">
-    <div class="card"><div class="card-body" id="feed-list"></div></div>
-  </div>
+  <div id="t-positions" class="hidden"><div class="card"><div class="card-b"><div class="pos-grid" id="pos-full"></div></div></div></div>
+  <div id="t-pending" class="hidden"><div class="card"><div class="card-h"><div class="card-t">⏳ أوامر معلّقة (Limit @ entry1)</div></div><div class="card-b" id="pend-list"></div></div></div>
+  <div id="t-history" class="hidden"><div class="card"><div class="card-b" id="hist-list"></div></div></div>
+  <div id="t-feed" class="hidden"><div class="card"><div class="card-b" id="feed-list"></div></div></div>
 </div>
-
-<!-- Status Bar -->
-<div class="status-bar">
-  <div><span class="status-dot on" id="st-dot"></span> متصل · Binance API</div>
+<div class="status">
+  <div><span class="st-dot on" id="st-dot"></span> Binance API · data-api.binance.vision</div>
   <div class="mono" id="st-time">--</div>
 </div>
-
 <script>
-const STATE_URL=()=>`./state.json?_=${Date.now()}`;
-const TRADES_URL=()=>`./trades_log.csv?_=${Date.now()}`;
-const REFRESH=15000;
+const S_URL=()=>`./state.json?_=${Date.now()}`;
+const T_URL=()=>`./trades_log.csv?_=${Date.now()}`;
 let LAST={state:null,trades:[],prices:{}};
-
-// === Utils ===
 const $=s=>document.querySelector(s);
-const $$=s=>document.querySelectorAll(s);
 const num=x=>parseFloat(x)||0;
 const money=(v,d=2)=>'$'+Number(v).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});
 const pct=v=>(v>=0?'+':'')+v.toFixed(2)+'%';
-const price=p=>{p=Number(p);if(p>=1000)return p.toFixed(2);if(p>=1)return p.toFixed(4);return p.toFixed(6)};
-const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-function timeAgo(t){if(!t)return'';const d=Date.now()-new Date(t).getTime();const m=Math.floor(d/60000);if(m<1)return'الآن';if(m<60)return m+' د';const h=Math.floor(m/60);if(h<24)return h+' س';return Math.floor(h/24)+' ي'}
-function fmtDT(t){if(!t)return'';try{return new Date(t).toLocaleString('ar-EG',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}catch(e){return t}}
+const price=p=>{p=Number(p);if(!p)return'--';if(p>=1000)return p.toFixed(2);if(p>=1)return p.toFixed(4);if(p>=0.001)return p.toFixed(6);return p.toFixed(8)};
+function timeAgo(t){if(!t)return'';const m=Math.floor((Date.now()-new Date(t).getTime())/60000);if(m<1)return'الآن';if(m<60)return m+'د';const h=Math.floor(m/60);if(h<24)return h+'س';return Math.floor(h/24)+'ي'}
+function fmtDT(t){if(!t)return'';try{return new Date(t).toLocaleString('ar-EG',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}catch(e){return String(t).slice(0,16)}}
+function parseCSV(txt){const lines=txt.trim().split('\n');if(lines.length<2)return[];const h=lines[0].split(',');return lines.slice(1).filter(l=>l.trim()).map(l=>{const v=l.split(',');const r={};h.forEach((k,i)=>r[k.trim()]=(v[i]||'').trim());return r;});}
+async function getPrices(syms){const p={};for(const s of syms){try{const r=await fetch(`https://data-api.binance.vision/api/v3/ticker/price?symbol=${encodeURIComponent(s)}`);if(r.ok){const d=await r.json();p[s]=parseFloat(d.price);}}catch(e){}}return p;}
 
-// === CSV Parser ===
-function parseCSV(text){
-  const lines=text.trim().split('\n');if(lines.length<2)return[];
-  const headers=lines[0].split(',');
-  return lines.slice(1).map(l=>{
-    const vals=l.split(',');const row={};
-    headers.forEach((h,i)=>row[h.trim()]=(vals[i]||'').trim());
-    return row;
-  });
-}
-
-// === Fetch Binance ===
-async function fetchPrices(symbols){
-  const prices={};
-  for(const sym of symbols){
-    try{
-      const r=await fetch(`https://data-api.binance.vision/api/v3/ticker/price?symbol=${encodeURIComponent(sym)}`);
-      if(r.ok){const d=await r.json();prices[sym]=parseFloat(d.price);}
-    }catch(e){}
-  }
-  return prices;
-}
-
-// === Render ===
 function render(){
-  const {state,trades,prices}=LAST;
+  const{state,trades,prices}=LAST;
   if(!state)return;
-
   const bal=num(state.balance)||10000;
-  const stats=state.stats||{};
-  const total=stats.total_trades||0;
-  const wins=stats.wins||0;
-  const losses=stats.losses||0;
-  const wr=total?((wins/total)*100):0;
-  const gp=stats.gross_profit||0;
-  const gl=stats.gross_loss||0;
-  const pf=gl>0?(gp/gl):0;
-  const ret=((bal-10000)/10000)*100;
-  const positions=state.open_positions||{};
-  const pending=state.pending_setups||{};
-  const posKeys=Object.keys(positions);
-  const pendKeys=Object.keys(pending);
-
-  // Profile stats
-  $('#ps-trades').textContent=total;
-  $('#ps-wr').textContent=wr.toFixed(1)+'%';
-  $('#ps-pf').textContent=pf.toFixed(2);
-  $('#ps-ret').textContent=pct(ret);
-  $('#ps-ret').className=ret>=0?'pos':'neg';
-
-  // KPIs
-  $('#kpi-grid').innerHTML=`
-    <div class="kpi k-green"><div class="kpi-label">💰 رأس المال</div><div class="kpi-val">${money(bal,0)}</div><div class="kpi-foot ${ret>=0?'pos':'neg'}">${pct(ret)}</div></div>
-    <div class="kpi k-blue"><div class="kpi-label">📊 إجمالي الصفقات</div><div class="kpi-val">${total}</div><div class="kpi-foot">${wins} رابحة · ${losses} خاسرة</div></div>
-    <div class="kpi k-green"><div class="kpi-label">🎯 نسبة النجاح</div><div class="kpi-val pos">${wr.toFixed(1)}%</div><div class="kpi-foot">${wins}/${total}</div></div>
-    <div class="kpi k-purple"><div class="kpi-label">⚖️ عامل الربح</div><div class="kpi-val">${pf.toFixed(2)}</div><div class="kpi-foot">Profit Factor</div></div>
-    <div class="kpi k-amber"><div class="kpi-label">📂 مفتوحة</div><div class="kpi-val">${posKeys.length}</div><div class="kpi-foot">${pendKeys.length} معلّقة</div></div>
-    <div class="kpi k-green"><div class="kpi-label">📅 ربح اليوم</div><div class="kpi-val pos">${money(todayPnl(trades),0)}</div><div class="kpi-foot">آخر 24 ساعة</div></div>
-  `;
-
-  // Equity
+  const st=state.stats||{};
+  const total=st.total_trades||0,wins=st.wins||0,losses=st.losses||0;
+  const wr=total?wins/total*100:0;
+  const gp=st.gross_profit||0,gl=st.gross_loss||0;
+  const pf=gl>0?gp/gl:0;
+  const ret=(bal-10000)/10000*100;
+  const pos=state.open_positions||{};
+  const pend=state.pending_setups||{};
+  const posK=Object.keys(pos),pendK=Object.keys(pend);
+  $('#kpis').innerHTML=`
+    <div class="kpi g"><div class="kpi-label">رأس المال</div><div class="kpi-val">${money(bal,0)}</div><div class="kpi-sub ${ret>=0?'pos':'neg'}">${pct(ret)}</div></div>
+    <div class="kpi b"><div class="kpi-label">الصفقات</div><div class="kpi-val">${total}</div><div class="kpi-sub">${wins}W / ${losses}L</div></div>
+    <div class="kpi g"><div class="kpi-label">نسبة النجاح</div><div class="kpi-val pos">${wr.toFixed(1)}%</div><div class="kpi-sub">${wins}/${total}</div></div>
+    <div class="kpi p"><div class="kpi-label">عامل الربح</div><div class="kpi-val">${pf.toFixed(2)}</div><div class="kpi-sub">PF</div></div>
+    <div class="kpi a"><div class="kpi-label">مفتوحة</div><div class="kpi-val">${posK.length}</div><div class="kpi-sub">${pendK.length} معلّقة</div></div>
+    <div class="kpi g"><div class="kpi-label">ربح اليوم</div><div class="kpi-val pos">${money(todayPnl(trades),0)}</div><div class="kpi-sub">24h</div></div>`;
   $('#eq-val').textContent=money(bal);
-  $('#eq-pct').textContent=pct(ret);
-  $('#eq-pct').className='mono '+(ret>=0?'pos':'neg');
-  renderEquity(trades,bal);
-
-  // Positions
-  $('#pos-count').textContent=posKeys.length;
-  $('#open-count').textContent=posKeys.length+' نشطة';
-  renderPositions(positions,prices);
-
-  // Recent trades
-  renderRecentTrades(trades);
-
-  // Heartbeat
-  renderHeartbeat(trades,posKeys.length);
-
-  // History tab
-  renderHistory(trades);
-
-  // Feed tab
-  renderFeed(state,trades);
+  $('#eq-ret').textContent=pct(ret);
+  $('#eq-ret').className='eq-ret mono '+(ret>=0?'pos':'neg');
+  drawEquity(trades);
+  drawHeartbeat(trades,posK.length);
+  $('#cnt-pos').textContent=posK.length;
+  $('#cnt-pend').textContent=pendK.length;
+  $('#cnt-hist').textContent=trades.length;
+  const posHtml=posK.length?posK.map(s=>posCard(s,pos[s],prices[s])).join(''):'<div class="empty">📭 لا صفقات مفتوحة</div>';
+  $('#pos-overview').innerHTML=posHtml;
+  $('#pos-full').innerHTML=posHtml;
+  $('#pend-list').innerHTML=pendK.length?pendK.map(s=>{const p=pend[s];return`<div class="pend-row"><div><span class="pend-sym">${s}</span><div class="pend-info">Entry: ${price(num(p.entry1))} | SL: ${price(num(p.sl))} | TP: ${price(num(p.tp))}</div></div><div class="pend-info">${timeAgo(p.signal_time)}</div></div>`;}).join(''):'<div class="empty">لا أوامر معلّقة</div>';
+  const recent=trades.slice(-8).reverse();
+  $('#recent').innerHTML=recent.length?recent.map(tradeRow).join(''):'<div class="empty">لا صفقات</div>';
+  $('#hist-list').innerHTML=trades.slice().reverse().map(tradeRow).join('')||'<div class="empty">لا سجل</div>';
+  const hist=state.signal_history||[];
+  $('#feed-list').innerHTML=hist.length?hist.slice(0,30).map(h=>{const k=h.kind||'';const dot=k.includes('خروج')?(h.detail||'').includes('-')?'r':'g':k.includes('إشارة')?'b':k.includes('إلغاء')?'a':'g';return`<div class="feed-item"><div class="feed-dot ${dot}"></div><div><div class="feed-text"><b>${h.symbol||''}</b> — ${h.detail||k}</div><div class="feed-time">${timeAgo(h.time)} · ${k}</div></div></div>`;}).join(''):'<div class="empty">لا نشاط</div>';
 }
-
-function todayPnl(trades){
-  const now=Date.now();const day=24*3600*1000;
-  return trades.filter(t=>{const d=now-new Date(t.exit_time||t.signal_time).getTime();return d<day;})
-    .reduce((s,t)=>s+num(t.pnl_dollars),0);
-}
-
-function renderEquity(trades,bal){
+function todayPnl(trades){const now=Date.now(),day=86400000;return trades.filter(t=>now-new Date(t.exit_time||t.signal_time).getTime()<day).reduce((s,t)=>s+num(t.pnl_dollars),0);}
+function drawEquity(trades){
   if(!trades.length){$('#eq-svg').innerHTML='';return;}
-  const pts=[10000];let b=10000;
-  trades.forEach(t=>{b+=num(t.pnl_dollars);pts.push(b);});
-  const W=600,H=180,P=10;
+  const pts=[10000,...trades.map(t=>num(t.balance_after)||10000)];
+  const W=800,H=220,P=10;
   const min=Math.min(...pts),max=Math.max(...pts),rng=(max-min)||1;
   const x=i=>P+(i/(pts.length-1))*(W-2*P);
   const y=v=>H-P-((v-min)/rng)*(H-2*P);
   let path=`M${x(0)},${y(pts[0])}`;
-  pts.forEach((v,i)=>{if(i>0)path+=` L${x(i)},${y(v)}`;});
-  const grad=path+` L${x(pts.length-1)},${H} L${x(0)},${H} Z`;
-  $('#eq-svg').innerHTML=`
-    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:100%">
-      <defs><linearGradient id="eg" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="var(--green)" stop-opacity=".2"/>
-        <stop offset="100%" stop-color="var(--green)" stop-opacity="0"/>
-      </linearGradient></defs>
-      <path d="${grad}" fill="url(#eg)"/>
-      <path d="${path}" fill="none" stroke="var(--green)" stroke-width="2" stroke-linecap="round"/>
-      <circle cx="${x(pts.length-1)}" cy="${y(pts[pts.length-1])}" r="4" fill="var(--green)">
-        <animate attributeName="r" values="3;6;3" dur="2s" repeatCount="indefinite"/>
-      </circle>
-    </svg>`;
+  for(let i=1;i<pts.length;i++)path+=` L${x(i)},${y(pts[i])}`;
+  const area=path+` L${x(pts.length-1)},${H} L${x(0)},${H} Z`;
+  const lastUp=pts[pts.length-1]>=pts[0];
+  const col=lastUp?'var(--green)':'var(--red)';
+  $('#eq-svg').innerHTML=`<defs><linearGradient id="eg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${col}" stop-opacity=".15"/><stop offset="100%" stop-color="${col}" stop-opacity="0"/></linearGradient></defs><path d="${area}" fill="url(#eg)"/><path d="${path}" fill="none" stroke="${col}" stroke-width="2" stroke-linejoin="round"/><circle cx="${x(pts.length-1)}" cy="${y(pts[pts.length-1])}" r="4" fill="${col}"><animate attributeName="opacity" values="1;.4;1" dur="2s" repeatCount="indefinite"/></circle>`;
 }
-
-function renderPositions(positions,prices){
-  const keys=Object.keys(positions);
-  const html=keys.length?keys.map(sym=>{
-    const p=positions[sym];
-    const entry=num(p.entry_price);
-    const cur=prices[sym]||entry;
-    const pnlPct=((cur-entry)/entry)*100;
-    const pos=pnlPct>=0;
-    return `<div class="pos-card">
-      <div class="pos-top">
-        <div class="pos-sym">${esc(sym)} <span class="pos-badge buy">LIMIT</span></div>
-        <div class="pos-pnl ${pos?'pos':'neg'}">${pct(pnlPct)}</div>
-      </div>
-      <div class="pos-details">
-        <div class="pos-d"><div class="l">الدخول</div><div class="v">${price(entry)}</div></div>
-        <div class="pos-d"><div class="l">الحالي</div><div class="v ${pos?'pos':'neg'}">${price(cur)}</div></div>
-        <div class="pos-d"><div class="l">الهدف</div><div class="v pos">${price(num(p.tp))}</div></div>
-        <div class="pos-d"><div class="l">الوقف</div><div class="v neg">${price(num(p.sl))}</div></div>
-        <div class="pos-d"><div class="l">Score</div><div class="v">${p.score?num(p.score).toFixed(2):'--'}</div></div>
-        <div class="pos-d"><div class="l">المدة</div><div class="v">${timeAgo(p.entry_time)}</div></div>
-      </div>
-    </div>`;
-  }).join(''):'<div class="empty"><div class="ic">📭</div>لا توجد صفقات مفتوحة حاليًا</div>';
-  $('#pos-grid').innerHTML=html;
-  $('#pos-grid-full').innerHTML=html;
-}
-
-function renderRecentTrades(trades){
-  const recent=trades.slice(-8).reverse();
-  $('#recent-trades').innerHTML=recent.length?recent.map(t=>{
-    const win=num(t.pnl_dollars)>=0;
-    return `<div class="trade-row">
-      <div class="trade-icon ${win?'win':'loss'}">${win?'🎯':'🛑'}</div>
-      <div class="trade-info">
-        <div class="trade-sym">${esc(t.pair||t.symbol||'')}</div>
-        <div class="trade-time">${fmtDT(t.exit_time||t.signal_time)} · ${timeAgo(t.exit_time||t.signal_time)}</div>
-      </div>
-      <div class="trade-pnl ${win?'pos':'neg'}">${win?'+':''}${money(num(t.pnl_dollars))}</div>
-    </div>`;
-  }).join(''):'<div class="empty">لا توجد صفقات بعد</div>';
-}
-
-function renderHeartbeat(trades,openCount){
-  const recent=trades.slice(-50);
+function drawHeartbeat(trades,openCount){
+  const recent=trades.slice(-60);
   let html=recent.map(t=>{
     const r=(t.exit_reason||'').toLowerCase();
-    const cls=r.includes('tp')||r.includes('trail')?'tp':r.includes('sl')?'sl':'to';
-    return `<div class="hb-bar ${cls}" title="${esc(t.pair||'')} ${num(t.pnl_dollars)>=0?'+':''}${money(num(t.pnl_dollars))}"></div>`;
+    let cls='to',h=18;
+    if(r.includes('tp')){cls='tp';h=30;}
+    else if(r.includes('trail')){cls='trail';h=26;}
+    else if(r.includes('sl')){cls='sl';h=12;}
+    else{cls='to';h=16;}
+    const pnl=num(t.pnl_dollars);
+    h=Math.max(8,Math.min(38,h+Math.abs(pnl)/40));
+    return`<div class="hb-bar ${cls}" style="height:${h}px" title="${t.pair||''} ${pnl>=0?'+':''}${money(pnl)} | ${t.exit_reason||''}"></div>`;
   }).join('');
   for(let i=0;i<openCount;i++)html+=`<div class="hb-bar open"></div>`;
-  $('#hb').innerHTML=html||'<span style="color:var(--text3);font-size:12px">لا بيانات</span>';
-  $('#hb-count').textContent=recent.length+' صفقة';
+  $('#hb').innerHTML=html||'<span style="font-size:11px;color:var(--text3)">لا بيانات</span>';
+  const w=recent.filter(t=>num(t.pnl_dollars)>0).length;
+  $('#hb-info').textContent=`${recent.length} صفقة | ${w} رابحة`;
 }
-
-function renderHistory(trades){
-  const rows=trades.slice().reverse();
-  $('#history-list').innerHTML=rows.length?rows.map(t=>{
-    const win=num(t.pnl_dollars)>=0;
-    return `<div class="trade-row">
-      <div class="trade-icon ${win?'win':'loss'}">${win?'🎯':'🛑'}</div>
-      <div class="trade-info">
-        <div class="trade-sym">${esc(t.pair||t.symbol||'')}</div>
-        <div class="trade-time">${fmtDT(t.exit_time)} · ${t.exit_reason||''} · Score: ${t.score||'--'}</div>
-      </div>
-      <div class="trade-pnl ${win?'pos':'neg'}">${win?'+':''}${money(num(t.pnl_dollars))}<br><small style="font-size:10px">${pct(num(t.pnl_pct_net||0))}</small></div>
-    </div>`;
-  }).join(''):'<div class="empty">لا يوجد سجل</div>';
+function posCard(sym,p,curPrice){
+  const entry=num(p.entry_price),sl=num(p.sl),tp=num(p.tp);
+  const cur=curPrice||entry;
+  const pnlPct=((cur-entry)/entry)*100;
+  const up=pnlPct>=0;
+  const lo=Math.min(sl,entry,tp,cur)*0.998;
+  const hi=Math.max(sl,entry,tp,cur)*1.002;
+  const rng=hi-lo||1;
+  const pctPos=v=>((v-lo)/rng*100).toFixed(1);
+  const entryP=pctPos(entry),slP=pctPos(sl),tpP=pctPos(tp),curP=pctPos(cur);
+  const fillL=Math.min(parseFloat(entryP),parseFloat(curP));
+  const fillW=Math.abs(parseFloat(curP)-parseFloat(entryP));
+  return`<div class="pos-card">
+    <div class="pos-top"><span class="pos-sym">${sym}</span><span class="pos-tag">LIMIT</span></div>
+    <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:4px">
+      <span class="mono ${up?'pos':'neg'}" style="font-size:18px;font-weight:700">${pct(pnlPct)}</span>
+      <span style="font-size:10px;color:var(--text3)">${timeAgo(p.entry_time)}</span>
+    </div>
+    <div class="range-bar">
+      <div class="range-fill ${up?'profit':'loss'}" style="left:${fillL}%;width:${Math.max(fillW,1)}%"></div>
+      <div class="range-marker sl" style="left:${slP}%"><span class="range-label" style="color:var(--red)">SL</span></div>
+      <div class="range-marker entry" style="left:${entryP}%"><span class="range-label" style="color:var(--blue)">Entry</span></div>
+      <div class="range-marker tp" style="left:${tpP}%"><span class="range-label" style="color:var(--green)">TP</span></div>
+      <div class="range-marker current" style="left:${curP}%"><span class="range-label" style="color:#fff">Now</span></div>
+    </div>
+    <div class="pos-info">
+      <div class="pos-i"><div class="l">دخول</div><div class="v">${price(entry)}</div></div>
+      <div class="pos-i"><div class="l">حالي</div><div class="v ${up?'pos':'neg'}">${price(cur)}</div></div>
+      <div class="pos-i"><div class="l">هدف</div><div class="v pos">${price(tp)}</div></div>
+      <div class="pos-i"><div class="l">وقف</div><div class="v neg">${price(sl)}</div></div>
+      <div class="pos-i"><div class="l">Score</div><div class="v">${p.score?num(p.score).toFixed(2):'--'}</div></div>
+      <div class="pos-i"><div class="l">حجم</div><div class="v">${p.position_dollars?money(num(p.position_dollars),0):'--'}</div></div>
+    </div>
+  </div>`;
 }
-
-function renderFeed(state,trades){
-  const items=[];
-  const history=state.signal_history||[];
-  history.slice(0,20).forEach(h=>{
-    const kind=h.kind||'';
-    const dot=kind.includes('خروج')?(h.detail||'').includes('-')?'r':'g':kind.includes('إشارة')?'b':'g';
-    items.push(`<div class="feed-item">
-      <div class="feed-dot ${dot}"></div>
-      <div class="feed-content">
-        <div class="feed-text"><b>${esc(h.symbol||'')}</b> — ${esc(h.detail||kind)}</div>
-        <div class="feed-meta">${timeAgo(h.time)} · ${kind}</div>
-      </div>
-    </div>`);
-  });
-  $('#feed-list').innerHTML=items.length?items.join(''):'<div class="empty">لا يوجد نشاط</div>';
+function tradeRow(t){
+  const w=num(t.pnl_dollars)>=0;
+  const r=(t.exit_reason||'');
+  const ic=r.includes('TP')||r.includes('Trail')?'🎯':r.includes('SL')?'🛑':'⏱️';
+  return`<div class="tr-row">
+    <div class="tr-ic ${w?'w':'l'}">${ic}</div>
+    <div><div class="tr-sym">${t.pair||t.symbol||''}</div><div class="tr-meta">${fmtDT(t.exit_time)} · ${r} · ${t.score?'S:'+num(t.score).toFixed(2):''}</div></div>
+    <div class="tr-pnl"><div class="v ${w?'pos':'neg'}">${w?'+':''}${money(num(t.pnl_dollars))}</div><div class="p ${w?'pos':'neg'}">${pct(num(t.pnl_pct_net||0))}</div></div>
+  </div>`;
 }
-
-// === Tabs ===
-$$('.tab').forEach(btn=>{
+document.querySelectorAll('.tab').forEach(btn=>{
   btn.addEventListener('click',()=>{
-    $$('.tab').forEach(b=>b.classList.remove('on'));
+    document.querySelectorAll('.tab').forEach(b=>b.classList.remove('on'));
     btn.classList.add('on');
-    const tab=btn.dataset.tab;
-    ['overview','positions','history','feed'].forEach(t=>{
-      const el=$(`#tab-${t}`);
-      if(el)el.style.display=t===tab?'block':'none';
-    });
+    const t=btn.dataset.t;
+    ['overview','positions','pending','history','feed'].forEach(id=>{const el=$(`#t-${id}`);if(el)el.classList.toggle('hidden',id!==t);});
   });
 });
-
-// === Load ===
 async function load(){
   try{
-    const [sR,tR]=await Promise.allSettled([
-      fetch(STATE_URL()).then(r=>{if(!r.ok)throw 0;return r.json();}),
-      fetch(TRADES_URL()).then(r=>{if(!r.ok)throw 0;return r.text();})
+    const[sR,tR]=await Promise.allSettled([
+      fetch(S_URL()).then(r=>{if(!r.ok)throw 0;return r.json()}),
+      fetch(T_URL()).then(r=>{if(!r.ok)throw 0;return r.text()})
     ]);
     const state=sR.status==='fulfilled'?sR.value:null;
     const trades=tR.status==='fulfilled'?parseCSV(tR.value):[];
     let prices={};
-    if(state&&state.open_positions){
-      const syms=Object.keys(state.open_positions);
-      if(syms.length)prices=await fetchPrices(syms);
-    }
+    if(state&&state.open_positions){const syms=Object.keys(state.open_positions);if(syms.length)prices=await getPrices(syms);}
     if(!state&&!trades.length)return;
     LAST={state,trades,prices};
     render();
-    $('#st-dot').className='status-dot on';
-    $('#upd-txt').textContent='آخر تحديث: '+new Date().toLocaleTimeString('en-GB');
+    $('#st-dot').className='st-dot on';
+    $('#upd').textContent=new Date().toLocaleTimeString('en-GB');
     $('#st-time').textContent=new Date().toLocaleTimeString('en-GB');
-  }catch(e){
-    $('#st-dot').className='status-dot off';
-  }
+  }catch(e){$('#st-dot').className='st-dot off';}
 }
-
 load();
-setInterval(load,REFRESH);
+setInterval(load,15000);
 </script>
 </body>
 </html>
