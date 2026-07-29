@@ -318,7 +318,7 @@ async function fetchBinancePrices(symbols){
   const prices={};
   await Promise.all(symbols.map(async sym=>{
     try{
-      const res=await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${encodeURIComponent(sym)}`);
+      const res=await fetch(`https://data-api.binance.vision/api/v3/ticker/price?symbol=${encodeURIComponent(sym)}`);
       if(!res.ok)return; const data=await res.json(); const p=parseFloat(data.price);
       if(!isNaN(p))prices[sym]=p;
     }catch(e){}
@@ -327,7 +327,7 @@ async function fetchBinancePrices(symbols){
 }
 async function fetchKlines(sym){
   try{
-    const res=await fetch(`https://api.binance.com/api/v3/klines?symbol=${encodeURIComponent(sym)}&interval=5m&limit=100`);
+    const res=await fetch(`https://data-api.binance.vision/api/v3/klines?symbol=${encodeURIComponent(sym)}&interval=30m&limit=100`);
     if(!res.ok)return null; const d=await res.json();
     return d.map(k=>({t:k[0],o:+k[1],h:+k[2],l:+k[3],c:+k[4]}));
   }catch(e){return null;}
