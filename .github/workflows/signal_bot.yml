@@ -2,20 +2,25 @@ name: Trading Signal Bot
 
 on:
   schedule:
-    - cron: "2 * * * *"   # كل ساعة (دقيقة 2) — بعد إغلاق شمعة 1h + وقت كافٍ لتوفر البيانات
-  workflow_dispatch: {}
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
 
 permissions:
   contents: write
-  pages: write
-  id-token: write
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+
+    concurrency:
+      group: trading-signal-bot
+      cancel-in-progress: false
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -23,18 +28,30 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
 
       - name: Run bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python run_bot.py
+        run: |
+          python run_bot.py
 
       - name: Commit state & trade log back to repo
         run: |
           git config --global user.name "signal-bot"
           git config --global user.email "signal-bot@users.noreply.github.com"
-          git add state.json trades_log.csv
-          git diff --staged --quiet || git commit -m "Update bot state [skip ci]"
-          git push
+
+          git add -A
+
+          if ! git diff --staged --quiet; then
+            git commit -m "Update bot state [skip ci]"
+          else
+            echo "No changes to commit"
+            exit 0
+          fi
+
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main
